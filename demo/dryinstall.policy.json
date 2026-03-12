@@ -1,0 +1,16 @@
+{
+  "_comment": "dryinstall Policy File — Least Privilege 원칙",
+  "_usage": "패키지별 허용 모듈을 명시. allow에 없는 모듈은 전부 차단.",
+
+  "puppeteer":     { "allow": ["fs", "child_process", "net", "os"] },
+  "playwright":    { "allow": ["fs", "child_process", "net", "os"] },
+  "express":       { "allow": ["net", "http", "https"] },
+  "axios":         { "allow": ["net", "http", "https", "tls"] },
+  "lodash":        { "allow": [] },
+  "left-pad":      { "allow": [] },
+  "chalk":         { "allow": [] },
+  "dayjs":         { "allow": [] },
+  "husky":         { "allow": ["fs", "child_process"] },
+
+  "_default":      { "allow": [] }
+}

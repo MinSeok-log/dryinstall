@@ -32,13 +32,22 @@ const os = require('os');
 
 // ── 스텔스 패턴 정의 ────────────────────────────────────
 const STEALTH_PATTERNS = [
-  // 환경 조건부 실행
+  // 환경 조건부 실행 — 맥락 기반
+  // CI 체크 단독은 정상 (axe-core, jiti 등 도구가 씀)
+  // CI 체크 + 외부 네트워크/exec 조합일 때만 위험
   {
-    id: 'ENV_CONDITIONAL',
-    pattern: /if\s*\(\s*process\.env\.(CI|GITHUB_ACTIONS|GITLAB_CI|JENKINS|TRAVIS|CIRCLECI|BUILD|DEPLOY)\s*\)/g,
-    label: 'CI/CD environment conditional execution',
+    id: 'ENV_CONDITIONAL_NETWORK',
+    pattern: /if\s*\(\s*process\.env\.(CI|GITHUB_ACTIONS|GITLAB_CI|JENKINS|TRAVIS|CIRCLECI)\s*\)[\s\S]{0,300}(?:fetch|axios|http\.get|https\.get|request)\s*\(\s*['"`]https?:\/\/(?!localhost|127\.0\.0\.1)/g,
+    label: 'CI-conditional + external network call — possible stealth backdoor',
     severity: 'CRITICAL',
-    description: '빌드/배포 환경에서만 실행되는 조건부 코드',
+    description: 'CI 환경에서만 외부 서버에 접속하는 조건부 코드',
+  },
+  {
+    id: 'ENV_CONDITIONAL_EXEC',
+    pattern: /if\s*\(\s*process\.env\.(CI|GITHUB_ACTIONS|GITLAB_CI|JENKINS|TRAVIS|CIRCLECI)\s*\)[\s\S]{0,300}(?:execSync|exec|spawn)\s*\([^)]*(?:curl|wget|bash|sh)\s+https?:\/\//g,
+    label: 'CI-conditional + shell download — possible stealth backdoor',
+    severity: 'CRITICAL',
+    description: 'CI 환경에서만 외부 스크립트를 다운로드/실행하는 코드',
   },
   // 호스트네임 타겟 공격
   {

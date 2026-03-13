@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+dry_modules/
+
+# dryinstall workspace
+*-workspace/
+.dryinstall-tmp/
+
+# Cache
+.popular-packages-cache.json
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test artifacts
+/tmp/dryinstall-*
+/tmp/*.tgz
+
+# Build
+dist/
+build/

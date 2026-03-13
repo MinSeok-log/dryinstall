@@ -1,0 +1,8 @@
+dry_modules/
+node_modules/
+*-workspace/
+demo/
+.popular-packages-cache.json
+*.log
+.env
+*.txt

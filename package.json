@@ -1,6 +1,6 @@
 {
   "name": "dryinstall",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "npm supply chain attack defense via execution isolation",
   "main": "src/loader.js",
   "bin": {
@@ -31,7 +31,7 @@
     "type": "git",
     "url": "https://github.com/MinSeok-log/dryinstall.git"
   },
-  "homepage": "https://github.com/MinSeok-log/dryinstall#readme",
+  "homepage": "https://minseok-log.github.io/dryinstall/",
   "engines": {
     "node": ">=16.0.0"
   }

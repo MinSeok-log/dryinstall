@@ -1,5 +1,10 @@
 # dryinstall
 
+![version](https://img.shields.io/badge/version-0.5.0-blue)
+![npm](https://img.shields.io/npm/v/dryinstall)
+![license](https://img.shields.io/badge/license-MIT-green)
+![node](https://img.shields.io/badge/node-%3E%3D16-brightgreen)
+
 > **npm install trusts everyone. dryinstall trusts no one.**
 
 You run `npm install`. Somewhere in that 1,500-package dependency tree, a postinstall script wakes up, calls home, and walks off with your AWS keys.
@@ -458,6 +463,19 @@ This started as a research project. It works. But for production environments, p
 > But if lifecycle scripts can't execute at all — it doesn't matter what they contain.
 
 That's the gap dryinstall fills.
+
+---
+
+## Changelog
+
+| Version | What changed |
+|---|---|
+| **v0.5.0** | `dryinstall check`, `--json`, `--dry-run`, GitHub Actions, sandbox 분리, Worker Thread 강화, 차단 리포트 개선 |
+| v0.4.0 | Execution Tracker, Exception Handler 7종 |
+| v0.3.0 | Adaptive ECU (profiler, advisor, rc-generator) |
+| v0.2.0 | scanner 화이트리스트 52개, 탐지 패턴 정교화 |
+| v0.1.1 | confusion-detector, hash-verifier, stealth-detector, maintainer-monitor 추가 |
+| v0.1.0 | 최초 배포 — 3-Layer 파이프라인 |
 
 ---
 

@@ -279,3 +279,4 @@ class Scanner {
     console.log('\x1b[36m[dryinstall:scanner] ═══════════════════\x1b[0m\n');
   }
 }
+module.exports = Scanner;

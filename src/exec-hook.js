@@ -115,3 +115,5 @@ process.on('exit', (code) => {
 });
 
 process.exit(0);
+
+module.exports = {};

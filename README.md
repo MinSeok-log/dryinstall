@@ -470,12 +470,12 @@ That's the gap dryinstall fills.
 
 | Version | What changed |
 |---|---|
-| **v0.5.0** | `dryinstall check`, `--json`, `--dry-run`, GitHub Actions, sandbox 분리, Worker Thread 강화, 차단 리포트 개선 |
-| v0.4.0 | Execution Tracker, Exception Handler 7종 |
-| v0.3.0 | Adaptive ECU (profiler, advisor, rc-generator) |
-| v0.2.0 | scanner 화이트리스트 52개, 탐지 패턴 정교화 |
-| v0.1.1 | confusion-detector, hash-verifier, stealth-detector, maintainer-monitor 추가 |
-| v0.1.0 | 최초 배포 — 3-Layer 파이프라인 |
+| **v0.5.0** | `dryinstall check`, `--json`, `--dry-run`, GitHub Actions, sandbox refactor, Worker Thread hardening, block report improvements |
+| v0.4.0 | Execution Tracker, Exception Handler (7 scenarios) |
+| v0.3.0 | Adaptive ECU — profiler, advisor, rc-generator |
+| v0.2.0 | scanner whitelist (52 packages), detection pattern tuning |
+| v0.1.1 | confusion-detector, hash-verifier, stealth-detector, maintainer-monitor |
+| v0.1.0 | Initial release — 3-Layer pipeline |
 
 ---
 

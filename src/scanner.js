@@ -61,6 +61,25 @@ const WHITELIST = new Set([
   'strip-comments', 'wrap-ansi', 'wrap-ansi-cjs',
   'sprintf-js', 'stable', 'text-table',
   'tinycolor2', 'svg-parser',
+
+  // polyfill / 표준 라이브러리
+  'core-js', 'core-js-pure', 'core-js-compat',
+  'regenerator-runtime', 'regenerate', 'regenerate-unicode-properties',
+
+  // 접근성 / 테스트 도구
+  'axe-core', 'axe-webdriverjs',
+
+  // 트랜스파일러 런타임
+  'jiti', 'tsx', 'esbuild-register',
+
+  // 네이티브 애드온 빌드 도구
+  'canvas', 'node-gyp', 'node-gyp-build', 'prebuild-install',
+  'node-pre-gyp', '@mapbox/node-pre-gyp',
+  'bindings', 'nan', 'node-addon-api',
+
+  // React / 번들러 내부
+  '@pmmmwh/react-refresh-webpack-plugin', 'react-refresh',
+  'lighthouse', 'lighthouse-logger',
 ]);
 
 // ── 탐지 패턴 ─────────────────────────────────────────
@@ -84,10 +103,17 @@ const DANGEROUS_PATTERNS = [
     label: 'obfuscated eval detected',
     severity: 'CRITICAL',
   },
-  // CI 조건부 실행 (스텔스 백도어)
+  // CI 조건부 실행 — 맥락 기반 탐지
+  // CI 체크 단독은 무시 (axe-core, jiti 등 정상 도구도 씀)
+  // CI 체크 + 외부 네트워크/코드실행 조합일 때만 위험
   {
-    pattern: /process\.env\.CI\s*[=!]{1,3}.*require|if\s*\(.*CI.*\)\s*\{[^}]*require/,
-    label: 'CI-conditional execution detected',
+    pattern: /if\s*\([^)]*process\.env\.CI[^)]*\)[^}]*(?:fetch|axios|http|https|request)\s*\(\s*['"`]https?:\/\/(?!localhost|127\.0\.0\.1)/,
+    label: 'CI-conditional + external network call detected',
+    severity: 'CRITICAL',
+  },
+  {
+    pattern: /process\.env\.CI[\s\S]{0,200}(?:execSync|exec|spawn)\s*\([^)]*(?:curl|wget|bash|sh)\s+https?:\/\//,
+    label: 'CI-conditional + shell download detected',
     severity: 'CRITICAL',
   },
   // 민감 토큰 접근
@@ -150,11 +176,10 @@ class Scanner {
     // ── 화이트리스트 체크 ──────────────────────────────
     if (WHITELIST.has(pkgName)) {
       this.report.skipped.push(pkgName);
-      return; // 출력 없이 조용히 스킵
+      return;
     }
 
     const issues = [];
-
     const lifecycleIssues = this._checkLifecycleScripts(pkgDir, pkgName);
     issues.push(...lifecycleIssues);
 
@@ -164,14 +189,75 @@ class Scanner {
     this.report.scanned.push(pkgName);
 
     if (issues.length > 0) {
-      const hasCritical = issues.some(i => i.severity === 'CRITICAL');
-      const color = hasCritical ? '\x1b[31m' : '\x1b[33m';
+      const hasCritical  = issues.some(i => i.severity === 'CRITICAL');
+      const isRequired   = this._isRuntimeCritical(pkgName);
+      const color        = hasCritical ? '\x1b[31m' : '\x1b[33m';
+
       console.error(`${color}[dryinstall:scanner] ✗ ${pkgName} — ${issues.length} issue(s)\x1b[0m`);
       issues.forEach(i => console.error(`  \x1b[31m→ [${i.severity}] ${i.label} in ${i.file}\x1b[0m`));
-      this.report.dangerous.push({ pkg: pkgName, issues });
-      this._isolate(pkgName, pkgDir);
+
+      if (isRequired) {
+        // 앱 실행에 필요한 패키지 — 격리하지 않고 경고만
+        console.warn(`\x1b[33m[dryinstall:scanner] ⚠  ${pkgName} is required by your app — skipping isolation\x1b[0m`);
+        console.warn(`\x1b[33m[dryinstall:scanner]    Add to .dryinstallrc alwaysAllow to suppress this warning\x1b[0m`);
+        this.report.dangerous.push({ pkg: pkgName, issues, isolated: false, reason: 'runtime-required' });
+      } else {
+        // 앱 실행에 불필요하거나 devDependency — 격리
+        this.report.dangerous.push({ pkg: pkgName, issues, isolated: true });
+        this._isolate(pkgName, pkgDir);
+      }
     }
-    // 안전한 패키지는 조용히 통과 (출력 없음)
+  }
+
+  /**
+   * 이 패키지가 앱 실행에 실제로 필요한지 판단
+   * 기준:
+   *   1. package.json dependencies (devDependencies 제외)에 있음
+   *   2. 빌드 도구(webpack, react-scripts 등)의 직접 의존성
+   *   3. 앱 entry point에서 require되는 패키지
+   */
+  _isRuntimeCritical(pkgName) {
+    try {
+      const pkgJsonPath = path.join(this.cwd, 'package.json');
+      if (!fs.existsSync(pkgJsonPath)) return false;
+      const appPkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf-8'));
+
+      // 1. 직접 dependency면 건드리지 않음
+      const deps    = Object.keys(appPkg.dependencies    || {});
+      const devDeps = Object.keys(appPkg.devDependencies || {});
+      if (deps.includes(pkgName)) return true;
+
+      // 2. 빌드 도구의 의존성인지 확인
+      //    react-scripts, webpack, vite, next 등이 쓰는 패키지는 격리 위험
+      const BUILD_TOOLS = [
+        'react-scripts', 'webpack', 'vite', 'next', '@vue/cli-service',
+        'create-react-app', 'parcel', 'rollup', 'esbuild',
+      ];
+      for (const tool of BUILD_TOOLS) {
+        const toolPkgPath = path.join(this.nodeModulesDir, tool, 'package.json');
+        if (!fs.existsSync(toolPkgPath)) continue;
+        try {
+          const toolPkg  = JSON.parse(fs.readFileSync(toolPkgPath, 'utf-8'));
+          const toolDeps = Object.keys({
+            ...(toolPkg.dependencies         || {}),
+            ...(toolPkg.peerDependencies     || {}),
+            ...(toolPkg.optionalDependencies || {}),
+          });
+          if (toolDeps.includes(pkgName)) return true;
+        } catch {}
+      }
+
+      // 3. npm start/dev 스크립트가 직접 실행하는 패키지
+      const scripts = appPkg.scripts || {};
+      const runScripts = ['start', 'dev', 'serve', 'preview'];
+      for (const s of runScripts) {
+        if (scripts[s] && scripts[s].includes(pkgName)) return true;
+      }
+
+      return false;
+    } catch {
+      return false; // 판단 실패 시 격리 허용
+    }
   }
 
   _checkLifecycleScripts(pkgDir, pkgName) {
@@ -229,6 +315,7 @@ class Scanner {
       this.storage.store(pkgName, pkgDir);
       this.report.migrated.push(pkgName);
       fs.rmSync(pkgDir, { recursive: true, force: true });
+      console.log(`\x1b[32m[dryinstall:scanner] ✓ ${pkgName} isolated → dry_modules/\x1b[0m`);
     } catch (e) {
       console.error(`\x1b[31m[dryinstall:scanner] Isolation failed: ${pkgName}: ${e.message}\x1b[0m`);
     }
@@ -263,20 +350,35 @@ class Scanner {
     console.log(`  Dangerous      : \x1b[31m${this.report.dangerous.length}\x1b[0m`);
     console.log(`  Isolated       : \x1b[32m${this.report.migrated.length}\x1b[0m`);
 
-    if (this.report.dangerous.length > 0) {
-      console.log('\n\x1b[31m  Packages requiring attention:\x1b[0m');
-      this.report.dangerous.forEach(({ pkg, issues }) => {
+    const isolated  = this.report.dangerous.filter(d => d.isolated !== false);
+    const warnOnly  = this.report.dangerous.filter(d => d.isolated === false);
+
+    if (isolated.length > 0) {
+      console.log('\n\x1b[31m  Isolated (moved to dry_modules):\x1b[0m');
+      isolated.forEach(({ pkg, issues }) => {
         console.log(`  \x1b[31m✗ ${pkg}\x1b[0m`);
         issues.forEach(i => console.log(`    \x1b[90m→ [${i.severity}] ${i.label}\x1b[0m`));
       });
-      console.log('\n\x1b[33m  These packages are moved to dry_modules/\x1b[0m');
-      console.log('\x1b[33m  Run your app with loader to sandbox them:\x1b[0m');
+      console.log('\n\x1b[33m  These packages are sandboxed in dry_modules/\x1b[0m');
       console.log('\x1b[33m  node -r ./node_modules/dryinstall/src/loader.js app.js\x1b[0m');
-    } else {
+    }
+
+    if (warnOnly.length > 0) {
+      console.log('\n\x1b[33m  Warning only (app requires these — NOT isolated):\x1b[0m');
+      warnOnly.forEach(({ pkg, issues }) => {
+        console.log(`  \x1b[33m⚠  ${pkg}\x1b[0m  \x1b[90m(runtime-required, skipped isolation)\x1b[0m`);
+        issues.forEach(i => console.log(`    \x1b[90m→ [${i.severity}] ${i.label}\x1b[0m`));
+      });
+      console.log('\n\x1b[90m  To suppress these warnings, add to ~/.dryinstallrc:\x1b[0m');
+      console.log(`\x1b[90m  { "alwaysAllow": [${warnOnly.map(d => `"${d.pkg}"`).join(', ')}] }\x1b[0m`);
+    }
+
+    if (isolated.length === 0 && warnOnly.length === 0) {
       console.log('\n\x1b[32m  ✓ No threats detected\x1b[0m');
     }
 
     console.log('\x1b[36m[dryinstall:scanner] ═══════════════════\x1b[0m\n');
   }
 }
+
 module.exports = Scanner;

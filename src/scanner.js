@@ -83,6 +83,13 @@ const WHITELIST = new Set([
   // React / 번들러 내부
   '@pmmmwh/react-refresh-webpack-plugin', 'react-refresh',
   'lighthouse', 'lighthouse-logger',
+
+  // 네이티브 이미지/그래픽
+  'sharp', 'jimp', 'canvas',
+
+  // Rust 기반 툴링 (정상적인 빌드 의존성)
+  'unrs-resolver', '@unrs/resolver',
+  '@biomejs/biome', 'lightningcss',
 ]);
 
 // ── 탐지 패턴 ─────────────────────────────────────────

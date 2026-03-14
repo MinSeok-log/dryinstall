@@ -1,6 +1,6 @@
 # dryinstall
 
-![version](https://img.shields.io/badge/version-0.5.0-blue)
+![version](https://img.shields.io/badge/version-0.6.0-blue)
 ![npm](https://img.shields.io/npm/v/dryinstall)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![node](https://img.shields.io/badge/node-%3E%3D16-brightgreen)
@@ -397,15 +397,30 @@ dryinstall install <pkg> --level=0   # observer mode — logs, doesn't block
 # Installing packages
 dryinstall install <pkg>                          full 8-layer scan + install
 dryinstall install <pkg> --interactive            ask before each blocked script
-dryinstall install <pkg> --level=0-3             set paranoia level
+dryinstall install <pkg> --level=0-3             set paranoia level (default: 3)
 dryinstall install <pkg> --allow=fs,net           let it touch specific things
 dryinstall install <pkg> --allow-package=name     whitelist a specific package
 dryinstall install <pkg> --allow-maintainer-change  live dangerously
 dryinstall install <pkg> --watch                  keep watching after install
+dryinstall install <pkg> --dry-run                analyze without installing
+dryinstall install <pkg> --json                   machine-readable JSON output
+
+# Analysis (no install)
+dryinstall check <pkg>                            analyze a package without installing
+dryinstall check <pkg1> <pkg2> --json            CI-friendly batch check (exit 1 if blocked)
+
+# Diagnosis & repair  ← new in v0.6.0
+dryinstall doctor                                 diagnose all dependencies
+                                                  shows: status / role / who requires it / fix
+dryinstall fix                                    auto-repair: restore sandboxed + install missing
+dryinstall fix <pkg>                              repair a specific package only
+dryinstall inspect                                show problem dependencies only
+dryinstall inspect --verbose                      show all dependencies
 
 # Managing your project
 dryinstall clean-install                          nuke node_modules, start fresh
 dryinstall scan                                   scan what's already installed
+dryinstall scan --quiet                           scan with minimal output (CI / long-term projects)
 dryinstall list                                   what's in dry_modules
 
 # The smart stuff
@@ -417,6 +432,48 @@ dryinstall track status                           what it's learned so far
 # Runtime
 dryinstall setup-loader                           hook into npm start/dev/serve
 dryinstall remove-loader                          unhook
+
+# Global flags (work with any command)
+--quiet, -q       only show blocks and errors
+--verbose, -v     show all internal logs
+--json            machine-readable output, all logs go to stderr
+```
+
+### `dryinstall doctor` — What it looks like
+
+```
+════════════════════════════════════════════════════════
+  dryinstall — Dependency Doctor
+════════════════════════════════════════════════════════
+  ✓ ok: 58   ⚠ sandboxed: 1   ✗ missing: 2
+
+  Package                Status       Role                  Version
+  ──────────────────────────────────────────────────────────────────
+  core-js-pure           ✗ missing    ES polyfill (modular)  3.33.0
+  axe-core               ⚠ sandboxed  a11y testing           4.7.0
+
+  Why these packages are needed:
+  core-js-pure  (missing)
+    required by: @pmmmwh/react-refresh-webpack-plugin → babel-loader
+  axe-core  (sandboxed)
+    required by: eslint-plugin-jsx-a11y
+
+  Suggested fixes:
+  npm install core-js-pure
+  dryinstall fix axe-core
+════════════════════════════════════════════════════════
+```
+
+### `dryinstall fix` — Auto-repair
+
+```
+  Restoring sandboxed packages...
+  ✓ axe-core  restored
+
+  Installing missing packages...
+  ✓ core-js-pure
+
+  Done. 2 issue(s) fixed. Restart your app.
 ```
 
 ---
@@ -470,7 +527,10 @@ That's the gap dryinstall fills.
 
 | Version | What changed |
 |---|---|
-| **v0.5.0** | `dryinstall check`, `--json`, `--dry-run`, GitHub Actions, sandbox refactor, Worker Thread hardening, block report improvements |
+| **v0.6.0** | `dryinstall doctor`, `dryinstall fix`, `dryinstall inspect`, startup dependency report, logger system, parallel scan, `--quiet`/`--verbose` flags |
+| v0.5.5 | Centralized logger (423 console.log → logger), `--quiet`/`--verbose` added |
+| v0.5.2 | Context-aware CI detection (false positive fix), `module.exports` fixes |
+| v0.5.0 | `dryinstall check`, `--json`, `--dry-run`, GitHub Actions, sandbox refactor, Worker Thread hardening |
 | v0.4.0 | Execution Tracker, Exception Handler (7 scenarios) |
 | v0.3.0 | Adaptive ECU — profiler, advisor, rc-generator |
 | v0.2.0 | scanner whitelist (52 packages), detection pattern tuning |

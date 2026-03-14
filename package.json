@@ -1,6 +1,6 @@
 {
   "name": "dryinstall",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "description": "npm supply chain attack defense via execution isolation",
   "main": "src/loader.js",
   "bin": {

@@ -6,6 +6,7 @@ const path = require('path');
 
 const { SECURITY_LEVELS, getAllowedModules, buildInteractiveCache } = require('./sandbox-policy');
 const { askLifecycle } = require('./sandbox-interactive');
+const logger = require('./logger');
 
 /**
  * SandboxRuntime (리팩토링됨)
@@ -31,25 +32,25 @@ class SandboxRuntime {
   setLevel(level) {
     this.level = parseInt(level) || 3;
     const info = SECURITY_LEVELS[this.level];
-    console.log(`\x1b[36m[dryinstall:security] Level ${this.level} — ${info.name}\x1b[0m`);
+    logger.info(`\x1b[36m[dryinstall:security] Level ${this.level} — ${info.name}\x1b[0m`);
   }
 
   setInteractive(enabled) {
     this.interactive = enabled;
-    if (enabled) console.log('\x1b[36m[dryinstall:security] Interactive mode enabled\x1b[0m');
+    if (enabled) logger.info('security: Interactive mode enabled');
   }
 
   setExtraAllowed(modules) {
     this.extraAllowed = modules;
     if (modules.length > 0) {
-      console.log(`\x1b[33m[dryinstall:security] Extra allowed: [${modules.join(', ')}]\x1b[0m`);
+      logger.info(`\x1b[33m[dryinstall:security] Extra allowed: [${modules.join(', ')}]\x1b[0m`);
     }
   }
 
   setAllowedPackages(pkgs) {
     this.allowedPackages = pkgs;
     if (pkgs.length > 0) {
-      console.log(`\x1b[33m[dryinstall:security] Allowed packages: [${pkgs.join(', ')}]\x1b[0m`);
+      logger.info(`\x1b[33m[dryinstall:security] Allowed packages: [${pkgs.join(', ')}]\x1b[0m`);
     }
   }
 
@@ -70,7 +71,7 @@ class SandboxRuntime {
 
       // Level 0 — 감시만
       if (this.level === 0) {
-        console.log(`\x1b[33m[dryinstall:monitor] "${pkgName}" → "${mod}" (pass-through)\x1b[0m`);
+        logger.info(`\x1b[33m[dryinstall:monitor] "${pkgName}" → "${mod}" (pass-through)\x1b[0m`);
         allowed.push({ pkg: pkgName, module: mod, source: 'level-0' });
         return require(mod);
       }
@@ -91,7 +92,7 @@ class SandboxRuntime {
 
       // 차단
       const msg = `"${pkgName}" tried to access "${mod}" — blocked (Level ${this.level})`;
-      console.error(`\x1b[31m[dryinstall:sandbox] ✗ ${msg}\x1b[0m`);
+      logger.warn(`\x1b[31m[dryinstall:sandbox] ✗ ${msg}\x1b[0m`);
       blocked.push({ pkg: pkgName, module: mod, time: new Date().toISOString() });
       throw new Error(`dryinstall: access to "${mod}" is not allowed`);
     };
@@ -112,9 +113,9 @@ class SandboxRuntime {
       setTimeout,  clearTimeout,
       setInterval, clearInterval,
       console: {
-        log:   (...a) => console.log(`  [sandbox:${pkgName}]`, ...a),
-        warn:  (...a) => console.warn(`  [sandbox:${pkgName}]`, ...a),
-        error: (...a) => console.error(`  [sandbox:${pkgName}]`, ...a),
+        log:   (...a) => logger.verbose(`sandbox:${pkgName} ` + a.join(' ')),
+        warn:  (...a) => logger.verbose(`sandbox:${pkgName} ` + a.join(' ')),
+        error: (...a) => logger.verbose(`sandbox:${pkgName} ` + a.join(' ')),
       },
       process: {
         version:  process.version,
@@ -135,7 +136,7 @@ class SandboxRuntime {
   // ── 파일 로드 (vm 격리) ─────────────────────────────
   load(filePath, pkgName = 'unknown') {
     const levelConfig = SECURITY_LEVELS[this.level];
-    console.log(`\x1b[36m[dryinstall:sandbox] Loading: ${pkgName} [Level ${this.level} — ${levelConfig.name}]\x1b[0m`);
+    logger.info(`\x1b[36m[dryinstall:sandbox] Loading: ${pkgName} [Level ${this.level} — ${levelConfig.name}]\x1b[0m`);
 
     if (!fs.existsSync(filePath)) {
       throw new Error(`dryinstall: file not found: ${filePath}`);
@@ -146,11 +147,11 @@ class SandboxRuntime {
 
     try {
       vm.runInContext(code, context, { filename: filePath, timeout: 5000 });
-      console.log(`\x1b[32m[dryinstall:sandbox] ✓ ${pkgName} loaded safely\x1b[0m`);
+      logger.ok(`\x1b[32m[dryinstall:sandbox] ✓ ${pkgName} loaded safely\x1b[0m`);
       return context.module.exports;
     } catch (err) {
       if (err.message.startsWith('dryinstall:')) {
-        console.error(`\x1b[31m[dryinstall:sandbox] Attack blocked in "${pkgName}": ${err.message}\x1b[0m`);
+        logger.block(`\x1b[31m[dryinstall:sandbox] Attack blocked in "${pkgName}": ${err.message}\x1b[0m`);
         return {};
       }
       throw err;
@@ -164,7 +165,7 @@ class SandboxRuntime {
 
     // --allow-package 허용
     if (this.allowedPackages.includes(pkgName)) {
-      console.log(`\x1b[32m[dryinstall] ALLOWED by --allow-package: "${pkgName}"\x1b[0m`);
+      logger.info(`\x1b[32m[dryinstall] ALLOWED by --allow-package: "${pkgName}"\x1b[0m`);
       this.allowed.push({ pkg: pkgName, type: 'lifecycle', script, source: '--allow-package' });
       return;
     }
@@ -178,30 +179,30 @@ class SandboxRuntime {
       }
     }
 
-    console.warn(`\x1b[33m[dryinstall] Lifecycle blocked: "${pkgName}" — ${script.slice(0, 80)}\x1b[0m`);
+    logger.block(`\x1b[33m[dryinstall] Lifecycle blocked: "${pkgName}" — ${script.slice(0, 80)}\x1b[0m`);
     this.blocked.push({ pkg: pkgName, type: 'lifecycle', script, time: new Date().toISOString() });
   }
 
   // ── 리포트 ──────────────────────────────────────────
   report() {
     if (this.blocked.length === 0) {
-      console.log('\x1b[32m[dryinstall:sandbox] No threats detected\x1b[0m');
+      logger.ok('\x1b[32m[dryinstall:sandbox] No threats detected\x1b[0m');
       return;
     }
     const line = '═'.repeat(48);
-    console.log(`\n\x1b[31m${line}\x1b[0m`);
-    console.log(`\x1b[31m  Sandbox Report — ${this.blocked.length} blocked attempt(s)\x1b[0m`);
-    console.log(`\x1b[31m${line}\x1b[0m`);
+    logger.info(`\n\x1b[31m${line}\x1b[0m`);
+    logger.block(`\x1b[31m  Sandbox Report — ${this.blocked.length} blocked attempt(s)\x1b[0m`);
+    logger.info(`\x1b[31m${line}\x1b[0m`);
     this.blocked.forEach((b, i) => {
       if (b.type === 'lifecycle') {
-        console.log(`  [${i+1}] LIFECYCLE  pkg: ${b.pkg}`);
+        logger.info(`  [${i+1}] LIFECYCLE  pkg: ${b.pkg}`);
       } else if (b.type === 'prototype_escape') {
-        console.log(`  [${i+1}] ESCAPE     pkg: ${b.pkg} — prototype escape attempt`);
+        logger.info(`  [${i+1}] ESCAPE     pkg: ${b.pkg} — prototype escape attempt`);
       } else {
-        console.log(`  [${i+1}] MODULE     pkg: ${b.pkg} → tried: ${b.module}`);
+        logger.info(`  [${i+1}] MODULE     pkg: ${b.pkg} → tried: ${b.module}`);
       }
     });
-    console.log(`\x1b[31m${line}\x1b[0m\n`);
+    logger.info(`\x1b[31m${line}\x1b[0m\n`);
   }
 }
 
@@ -214,21 +215,21 @@ const WORKER_RUNNER = path.join(__dirname, 'worker-runner.js');
 
 function loadInWorker(filePath, pkgName = 'unknown') {
   return new Promise((resolve) => {
-    console.log(`\x1b[36m[dryinstall:worker] Loading in Worker Thread: ${pkgName}\x1b[0m`);
+    logger.info(`\x1b[36m[dryinstall:worker] Loading in Worker Thread: ${pkgName}\x1b[0m`);
     const worker = new Worker(WORKER_RUNNER, { workerData: { filePath, pkgName } });
 
     worker.on('message', (msg) => {
       if (msg.type === 'blocked') {
-        console.error(`\x1b[31m[dryinstall:worker] BLOCKED: "${msg.pkg}" → require("${msg.module}")\x1b[0m`);
+        logger.block(`\x1b[31m[dryinstall:worker] BLOCKED: "${msg.pkg}" → require("${msg.module}")\x1b[0m`);
       } else if (msg.type === 'done') {
         const n = msg.blocked?.length ?? 0;
-        console.log(`\x1b[32m[dryinstall:worker] ✓ ${pkgName} — ${n} attempt(s) blocked\x1b[0m`);
+        logger.block(`\x1b[32m[dryinstall:worker] ✓ ${pkgName} — ${n} attempt(s) blocked\x1b[0m`);
         resolve(msg.exports ?? {});
       }
     });
 
     worker.on('error', (err) => {
-      console.error(`\x1b[31m[dryinstall:worker] Error: ${err.message}\x1b[0m`);
+      logger.warn(`\x1b[31m[dryinstall:worker] Error: ${err.message}\x1b[0m`);
       resolve({});
     });
 

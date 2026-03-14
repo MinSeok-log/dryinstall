@@ -6,6 +6,7 @@ const tar = require('tar');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const logger = require('./logger');
 
 /**
  * Stealth Backdoor Detector
@@ -191,13 +192,13 @@ function analyzeFile(filename, content) {
  * 메인 탐지 함수
  */
 async function detectStealth(pkgName, tarballUrl) {
-  console.log(`\x1b[36m[dryinstall:stealth] Scanning for backdoor patterns: ${pkgName}\x1b[0m`);
+  logger.info(`\x1b[36m[dryinstall:stealth] Scanning for backdoor patterns: ${pkgName}\x1b[0m`);
 
   let files;
   try {
     files = await extractJsFiles(tarballUrl);
   } catch (err) {
-    console.log(`\x1b[33m[dryinstall:stealth] ⚠ Could not extract files: ${err.message}\x1b[0m`);
+    logger.warn(`\x1b[33m[dryinstall:stealth] ⚠ Could not extract files: ${err.message}\x1b[0m`);
     return { skipped: true };
   }
 
@@ -208,7 +209,7 @@ async function detectStealth(pkgName, tarballUrl) {
   }
 
   if (allFindings.length === 0) {
-    console.log(`\x1b[32m[dryinstall:stealth] ✓ No stealth patterns detected\x1b[0m`);
+    logger.ok(`\x1b[32m[dryinstall:stealth] ✓ No stealth patterns detected\x1b[0m`);
     return { clean: true };
   }
 
@@ -227,23 +228,23 @@ function reportStealth(pkgName, result) {
   const overallSeverity = criticals.length > 0 ? 'CRITICAL' : 'HIGH';
   const color = overallSeverity === 'CRITICAL' ? '\x1b[31m' : '\x1b[33m';
 
-  console.log('');
-  console.log(`${color}┌──────────────────────────────────────────────────────────┐\x1b[0m`);
-  console.log(`${color}│        ⚠  STEALTH BACKDOOR PATTERN DETECTED              │\x1b[0m`);
-  console.log(`${color}├──────────────────────────────────────────────────────────┤\x1b[0m`);
-  console.log(`${color}│  Package  : \x1b[1m${pkgName.padEnd(47)}\x1b[0m${color}│\x1b[0m`);
-  console.log(`${color}│  Findings : \x1b[1m${String(result.findings.length).padEnd(47)}\x1b[0m${color}│\x1b[0m`);
-  console.log(`${color}│  Severity : \x1b[1m${overallSeverity.padEnd(47)}\x1b[0m${color}│\x1b[0m`);
-  console.log(`${color}└──────────────────────────────────────────────────────────┘\x1b[0m`);
-  console.log('');
+  logger.info('');
+  logger.always(`${color}┌──────────────────────────────────────────────────────────┐\x1b[0m`);
+  logger.warn(`${color}│        ⚠  STEALTH BACKDOOR PATTERN DETECTED              │\x1b[0m`);
+  logger.always(`${color}├──────────────────────────────────────────────────────────┤\x1b[0m`);
+  logger.info(`${color}│  Package  : \x1b[1m${pkgName.padEnd(47)}\x1b[0m${color}│\x1b[0m`);
+  logger.info(`${color}│  Findings : \x1b[1m${String(result.findings.length).padEnd(47)}\x1b[0m${color}│\x1b[0m`);
+  logger.info(`${color}│  Severity : \x1b[1m${overallSeverity.padEnd(47)}\x1b[0m${color}│\x1b[0m`);
+  logger.always(`${color}└──────────────────────────────────────────────────────────┘\x1b[0m`);
+  logger.info('');
 
   result.findings.forEach((f, i) => {
     const fc = f.severity === 'CRITICAL' ? '\x1b[31m' : '\x1b[33m';
-    console.log(`${fc}  [${i + 1}] [${f.severity}] ${f.label}\x1b[0m`);
-    console.log(`\x1b[90m       file    : ${f.filename}\x1b[0m`);
-    console.log(`\x1b[90m       detail  : ${f.description}\x1b[0m`);
-    console.log(`\x1b[90m       context : ...${f.context.slice(0, 60)}...\x1b[0m`);
-    console.log('');
+    logger.info(`${fc}  [${i + 1}] [${f.severity}] ${f.label}\x1b[0m`);
+    logger.info(`\x1b[90m       file    : ${f.filename}\x1b[0m`);
+    logger.info(`\x1b[90m       detail  : ${f.description}\x1b[0m`);
+    logger.info(`\x1b[90m       context : ...${f.context.slice(0, 60)}...\x1b[0m`);
+    logger.info('');
   });
 }
 

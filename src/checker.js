@@ -7,6 +7,7 @@ const { analyzeVersionDiff }     = require('./version-diff-analyzer');
 const { detectStealth }          = require('./stealth-detector');
 const { checkMaintainerChange }  = require('./maintainer-monitor');
 const auditor                    = require('./auditor');
+const logger = require('./logger');
 
 /**
  * Checker
@@ -59,7 +60,7 @@ async function check(rawPkg, opts = {}) {
     blockReasons: [],
   };
 
-  const log = (...a) => { if (!silent && !json) console.log(...a); };
+  const log = (...a) => { if (!silent && !json) logger.always(a.join(' ')); };
   const C = {
     RESET: '\x1b[0m', RED: '\x1b[31m', GREEN: '\x1b[32m',
     YELLOW: '\x1b[33m', CYAN: '\x1b[36m', BOLD: '\x1b[1m',
@@ -236,7 +237,7 @@ async function checkMultiple(pkgs, opts = {}) {
       },
       ciExitCode: results.some(r => r.verdict === 'BLOCK') ? 1 : 0,
     };
-    console.log(JSON.stringify(output, null, 2));
+    process.stdout.write(JSON.stringify(output, null, 2) + '\n');
     return output;
   }
 

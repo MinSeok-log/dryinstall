@@ -9,6 +9,9 @@ const advisor        = require('../src/advisor');
 const executionTracker = require('../src/execution-tracker');
 const ex             = require('../src/exception-handler');
 const { check, checkMultiple } = require('../src/checker');
+const logger         = require('../src/logger');
+const { runInspect, summarizeErrors } = require('../src/startup-inspector');
+const { diagnose, printReport, fix: doctorFix } = require('../src/doctor');
 
 // ── 시작 시 환경 검사 ─────────────────────────────────
 const startupCheck = ex.runStartupChecks();
@@ -26,6 +29,13 @@ const interactive  = args.includes('--interactive') || args.includes('-i');
 const watchFlag    = args.includes('--watch');
 const jsonFlag     = args.includes('--json');
 const dryRun       = args.includes('--dry-run');
+const quietFlag    = args.includes('--quiet')   || args.includes('-q');
+const verboseFlag  = args.includes('--verbose') || args.includes('-v');
+
+// ── 로그 레벨 적용 ────────────────────────────────────
+if (jsonFlag)       logger.setJson(true);
+else if (quietFlag) logger.setLevel('QUIET');
+else if (verboseFlag) logger.setLevel('VERBOSE');
 
 const level          = levelFlag    ? parseInt(levelFlag.split('=')[1])        : defaultLevel;
 const extraAllowed   = allowFlag    ? allowFlag.split('=')[1].split(',')       : [];
@@ -157,6 +167,22 @@ const cli = new DryCLI(process.cwd());
       executionTracker.printStatus();
     }
 
+  // ── doctor ───────────────────────────────────────────
+  } else if (command === 'doctor') {
+    const results = await diagnose(process.cwd());
+    printReport(results);
+
+  // ── inspect ──────────────────────────────────────────
+  } else if (command === 'inspect') {
+    const verbose = args.includes('--verbose') || args.includes('-v');
+    runInspect(process.cwd(), { verbose });
+
+  // ── fix ───────────────────────────────────────────────
+  // doctor fix: missing 설치 + sandboxed 복구 통합
+  } else if (command === 'fix') {
+    const targetPkg = args[1] || null;
+    await doctorFix(process.cwd(), targetPkg);
+
   // ── help ─────────────────────────────────────────────
   } else {
     console.log(`
@@ -196,6 +222,11 @@ Security Levels:
 
 CI/CD Usage:
   dryinstall check express lodash --json
+  dryinstall doctor                                 Diagnose dependencies + show cause + suggest fix
+  dryinstall inspect                                Show dependency load status
+  dryinstall inspect --verbose                      Show all dependencies
+  dryinstall fix                                    Restore all sandboxed packages to node_modules
+  dryinstall fix <pkg>                              Restore specific package
   dryinstall install react --dry-run --json
   → exit code 0: safe  |  exit code 1: blocked
 

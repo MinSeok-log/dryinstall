@@ -16,9 +16,11 @@
  */
 
 const { recordBlocked } = require('./execution-tracker');
+const { runStartupReport } = require('./startup-inspector');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const logger = require('./logger');
 
 const TRACKER_PATH = path.join(os.homedir(), '.dryinstall-exectrack.json');
 
@@ -38,15 +40,17 @@ function saveTracker(data) {
 const tracker = loadTracker();
 const pending = tracker.pendingVerification || [];
 
+// 의존성 로드 상태 항상 표시
+runStartupReport(process.cwd());
+
 if (pending.length === 0) {
-  // 검증할 게 없으면 조용히 종료 → 원본 명령 실행으로 넘어감
   process.exit(0);
 }
 
 const pkgs = pending.map(p => p.pkg);
-console.log('\x1b[36m[dryinstall] Execution tracking active\x1b[0m');
-console.log(`\x1b[90m  Monitoring: ${pkgs.join(', ')}\x1b[0m`);
-console.log('\x1b[90m  If app crashes, run "dryinstall track status" to see results\x1b[0m\n');
+logger.info('\x1b[36m[dryinstall] Execution tracking active\x1b[0m');
+logger.info(`\x1b[90m  Monitoring: ${pkgs.join(', ')}\x1b[0m`);
+logger.info('\x1b[90m  If app crashes, run "dryinstall track status" to see results\x1b[0m\n');
 
 // 시작 시각 기록
 tracker._runStartedAt = new Date().toISOString();
@@ -93,9 +97,9 @@ process.on('exit', (code) => {
 
     if (added.length > 0) {
       fs.writeFileSync(RC_PATH, JSON.stringify(rc, null, 2));
-      console.log('\n\x1b[33m[dryinstall] Auto-learned from crash:\x1b[0m');
-      added.forEach(p => console.log(`\x1b[33m  + alwaysAllow: ${p}\x1b[0m`));
-      console.log('\x1b[90m  Reinstall and restart to apply\x1b[0m\n');
+      logger.info('\n\x1b[33m[dryinstall] Auto-learned from crash:\x1b[0m');
+      added.forEach(p => logger.info(`exec-hook: alwaysAllow: ${p}`));
+      logger.info('\x1b[90m  Reinstall and restart to apply\x1b[0m\n');
     }
   } else if (elapsed >= 5000) {
     // 5초 이상 정상 동작 → 차단이 안전했음

@@ -1,0 +1,10 @@
+{
+  "name": "dryinstall-core",
+  "version": "0.1.0",
+  "napi": {
+    "name": "dryinstall-core",
+    "triples": {
+      "defaults": true
+    }
+  }
+}

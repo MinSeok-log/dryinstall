@@ -540,6 +540,7 @@ That's the gap dryinstall fills.
 
 | Version | What changed |
 |---|---|
+| **v0.7.0** | Rust sandbox engine (`dryinstall-core`) — OS kernel-level isolation via seccomp + namespace. N-API bridge. CLI options `-n -f -e`. Platform support table. |
 | **v0.6.0** | `dryinstall doctor`, `dryinstall fix`, `dryinstall inspect`, startup dependency report, logger system, parallel scan, `--quiet`/`--verbose` flags |
 | v0.5.5 | Centralized logger (423 console.log → logger), `--quiet`/`--verbose` added |
 | v0.5.2 | Context-aware CI detection (false positive fix), `module.exports` fixes |

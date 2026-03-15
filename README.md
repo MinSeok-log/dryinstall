@@ -1,9 +1,11 @@
 # dryinstall
 
-![version](https://img.shields.io/badge/version-0.6.0-blue)
+![version](https://img.shields.io/badge/version-0.7.0-blue)
 ![npm](https://img.shields.io/npm/v/dryinstall)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![node](https://img.shields.io/badge/node-%3E%3D16-brightgreen)
+![rust](https://img.shields.io/badge/core-Rust-orange?logo=rust)
+![security](https://img.shields.io/badge/sandbox-OS%20kernel%20level-red?logo=linux)
 
 > **npm install trusts everyone. dryinstall trusts no one.**
 
@@ -137,7 +139,18 @@ dryinstall install <pkg>
           ┌────────────────┐
           │  Adaptive ECU  │  Learns your habits.
           │                │  Gets smarter over time.
-          └────────────────┘
+          └───────┬────────┘
+                  │
+                  ▼
+   ┌──────────────────────────────┐
+   │  🦀 dryinstall-core (Rust)   │  The heart of the sandbox.
+   │                              │
+   │  seccomp   → syscall filter  │  OS kernel blocks network calls.
+   │  namespace → filesystem iso  │  /etc/passwd? Replaced with void.
+   │  env_clear → secret filter   │  AWS keys never leave this box.
+   │                              │
+   │  Node hook → child_process   │  execSync? execFile? Nope.
+   └──────────────────────────────┘
 ```
 
 ---
@@ -536,6 +549,77 @@ That's the gap dryinstall fills.
 | v0.2.0 | scanner whitelist (52 packages), detection pattern tuning |
 | v0.1.1 | confusion-detector, hash-verifier, stealth-detector, maintainer-monitor |
 | v0.1.0 | Initial release — 3-Layer pipeline |
+
+---
+
+## dryinstall-core — Rust Engine
+
+<div align="center">
+
+![Rust](https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=orange)
+![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
+![Security](https://img.shields.io/badge/OS%20Kernel%20Level-Sandbox-red?style=for-the-badge)
+
+</div>
+
+The Node.js layer handles detection.  
+The Rust engine handles **execution isolation**.
+
+```
+JavaScript sandbox (old)       Rust + OS kernel (new)
+─────────────────────────      ──────────────────────────────
+require('fs') blocked          openat() syscall → EPERM
+require('net') blocked         connect() syscall → EPERM
+child_process blocked          execve() syscall → EPERM
+process.env filtered           namespace isolation
+```
+
+**Why Rust?**
+
+Node.js sandboxes operate at the application layer — they can be bypassed by native addons, `process.binding()`, or crafted prototype chains.
+
+Rust talks directly to the OS kernel via `seccomp` and Linux `namespaces`. There is no bypass. The kernel says no.
+
+```
+Attack attempt         JS sandbox         Rust seccomp
+──────────────         ──────────         ────────────
+network call           blocked*           EPERM (kernel)
+read /etc/passwd       blocked*           namespace void
+child_process          blocked*           EPERM (kernel)
+native addon escape    possible ✗         impossible ✓
+
+* = bypassable via internal Node.js APIs
+```
+
+**3-Layer Defense:**
+
+| Layer | Technology | Blocks |
+|-------|-----------|--------|
+| 1 | Node hook | `child_process` module |
+| 2 | seccomp (`-n`) | network syscalls |
+| 3 | namespace (`-f`) | filesystem access |
+| 4 | env_clear (`-e`) | environment variables |
+
+**Source:** [`dryinstall-core/`](./dryinstall-core/) · [GitHub](https://github.com/MinSeok-log/dryinstall-core)
+
+> Experiment log with full reproduction steps: [EXPERIMENT.md](https://github.com/MinSeok-log/dryinstall-core/blob/main/EXPERIMENT.md)
+
+## Platform Support
+
+| Platform | Node hook | seccomp | namespace | Status |
+|----------|-----------|---------|-----------|--------|
+| Linux    | ✓ | ✓ | ✓ | **Full support** |
+| macOS    | ✓ | △ | △ | Partial |
+| Windows  | ✓ | ✗ | ✗ | Node hook only |
+
+> **Linux** gives you the full Rust kernel-level sandbox.  
+> **Windows/macOS** full kernel-level support is planned for v0.7.x via OS-native isolation APIs (Job Object on Windows, Apple Sandbox on macOS).
+
+---
+
+## Research
+
+[Cognitive Injection](https://github.com/MinSeok-log/cognitive-injection) — A new npm attack vector targeting AI agents via stdout. Bypasses all static security scanners.
 
 ---
 

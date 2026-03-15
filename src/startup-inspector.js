@@ -83,7 +83,7 @@ const KNOWN_ROLES = {
   'css-loader':               'CSS bundling',
 
   // 보안
-  'dryinstall':               'security layer (you)',
+  'dryinstall':               'security layer',
 };
 
 // ── 오류 패턴 → 원인 + 해결법 매핑 ─────────────────────

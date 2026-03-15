@@ -1,3 +1,4 @@
+cat > .gitignore << 'EOF'
 # Dependencies
 node_modules/
 dry_modules/
@@ -35,3 +36,6 @@ Thumbs.db
 # Build
 dist/
 build/
+target/
+*.node
+EOF

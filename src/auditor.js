@@ -1,6 +1,7 @@
 'use strict';
 
 const { execSync } = require('child_process');
+const logger = require('./logger');
 
 /**
  * Auditor
@@ -12,47 +13,34 @@ class Auditor {
     this.results = [];
   }
 
-  /**
-   * 특정 패키지 audit 실행
-   * @param {string} pkgName
-   * @returns {{ safe: boolean, vulnerabilities: array }}
-   */
   audit(pkgName, version) {
     const displayName = version ? `${pkgName}@${version}` : pkgName;
-    console.log(`\x1b[36m[dryinstall:audit] Checking: ${displayName}\x1b[0m`);
+    logger.verbose(`[dryinstall:audit] Checking: ${displayName}`);
 
     try {
-      const os = require('os');
-      const tmpDir = require('path').join(os.tmpdir(), `dryinstall-audit-${Date.now()}`);
-      const fs = require('fs');
+      const os   = require('os');
+      const path = require('path');
+      const fs   = require('fs');
+      const tmpDir = path.join(os.tmpdir(), `dryinstall-audit-${Date.now()}`);
 
       fs.mkdirSync(tmpDir, { recursive: true });
-
       fs.writeFileSync(`${tmpDir}/package.json`, JSON.stringify({
         name: 'dryinstall-audit-tmp',
         version: '1.0.0',
         dependencies: { [pkgName]: version || 'latest' }
       }, null, 2));
 
-      // npm install --package-lock-only (실제 설치 없이 lock 파일만 생성)
       execSync('npm install --package-lock-only --ignore-scripts', {
-        cwd: tmpDir,
-        stdio: 'pipe',
-        timeout: 30000,
+        cwd: tmpDir, stdio: 'pipe', timeout: 30000,
       });
 
-      // npm audit --json
       let auditOutput;
       try {
         execSync('npm audit --json', {
-          cwd: tmpDir,
-          stdio: 'pipe',
-          timeout: 15000,
+          cwd: tmpDir, stdio: 'pipe', timeout: 15000,
         });
-        // exit code 0 = 취약점 없음
         auditOutput = { vulnerabilities: {} };
       } catch (auditErr) {
-        // npm audit는 취약점 발견 시 exit code 1 반환
         try {
           auditOutput = JSON.parse(auditErr.stdout?.toString() || '{}');
         } catch {
@@ -60,11 +48,9 @@ class Auditor {
         }
       }
 
-      // 정리
       fs.rmSync(tmpDir, { recursive: true, force: true });
 
-      // 결과 파싱
-      const vulns = auditOutput.vulnerabilities || {};
+      const vulns    = auditOutput.vulnerabilities || {};
       const vulnList = Object.entries(vulns).map(([name, info]) => ({
         name,
         severity: info.severity,
@@ -74,11 +60,14 @@ class Auditor {
       const hasCritical = vulnList.some(v => ['critical', 'high'].includes(v.severity));
 
       if (vulnList.length === 0) {
-        console.log(`\x1b[32m[dryinstall:audit] ✓ No known vulnerabilities in ${displayName}\x1b[0m`);
+        logger.verbose(`[dryinstall:audit] ✓ No known vulnerabilities in ${displayName}`);
       } else {
         vulnList.forEach(v => {
-          const color = v.severity === 'critical' || v.severity === 'high' ? '\x1b[31m' : '\x1b[33m';
-          console.log(`${color}[dryinstall:audit] ${v.severity.toUpperCase()}: ${v.name} — ${v.via}\x1b[0m`);
+          if (v.severity === 'critical' || v.severity === 'high') {
+            logger.block(`[dryinstall:audit] ${v.severity.toUpperCase()}: ${v.name} — ${v.via}`);
+          } else {
+            logger.warn(`[dryinstall:audit] ${v.severity.toUpperCase()}: ${v.name} — ${v.via}`);
+          }
         });
       }
 
@@ -87,18 +76,17 @@ class Auditor {
       return result;
 
     } catch (err) {
-      console.warn(`\x1b[33m[dryinstall:audit] Could not audit ${pkgName}: ${err.message}\x1b[0m`);
-      // audit 실패해도 설치는 진행 (프로토타입)
+      logger.warn(`[dryinstall:audit] Could not audit ${pkgName}: ${err.message}`);
       return { safe: true, vulnerabilities: [] };
     }
   }
 
   report() {
     if (this.results.length === 0) return;
-    console.log('\n\x1b[36m[dryinstall:audit] Audit Summary:\x1b[0m');
+    logger.verbose('[dryinstall:audit] Audit Summary:');
     this.results.forEach(r => {
-      const status = r.safe ? '\x1b[32m✓ SAFE\x1b[0m' : '\x1b[31m✗ VULNERABLE\x1b[0m';
-      console.log(`  ${r.pkg}: ${status} (${r.vulnerabilities.length} issues)`);
+      const status = r.safe ? '✓ SAFE' : '✗ VULNERABLE';
+      logger.verbose(`  ${r.pkg}: ${status} (${r.vulnerabilities.length} issues)`);
     });
   }
 }

@@ -7,7 +7,7 @@ const sandbox          = require('../src/sandbox');
 const monitor          = require('../src/monitor');
 const advisor          = require('../src/advisor');
 const executionTracker = require('../src/execution-tracker');
-const trustCache = require('../src/learned-whitelist');  // ← 추가
+const trustCache = require('../src/trust-cache');
 const ex               = require('../src/exception-handler');
 const { check, checkMultiple } = require('../src/checker');
 const logger           = require('../src/logger');
@@ -129,30 +129,31 @@ const cli = new DryCLI(process.cwd());
       const _l = console.log;
       console.log = (...a) => lines.push(a.join(' '));
       advisor.printProfileReport();
-      trustCache.printTrustReport();  // ECU 학습 현황 포함
+      trustCache.printStatus();
       console.log = _l;
       process.stdout.write(JSON.stringify({ output: lines }, null, 2) + '\n');
     } else {
       advisor.printProfileReport();
-      trustCache.printTrustReport();  // ECU 학습 현황 포함
+      trustCache.printStatus();
     }
 
   // ── config suggest ───────────────────────────────────
   } else if (command === 'config' && args[1] === 'suggest') {
     await advisor.runSuggest();
-    await // trust-cache: 제안은 interactive 설치 시 자동 처리;  // ECU 제안 포함
 
   // ── allow <pkg> ──────────────────────────────────────
   // dryinstall allow <pkg>  — 수동으로 ECU whitelist 추가
-  } else if (command === 'allow' && pkgName) {
-    trustCache.manualAllow(pkgName, 'user');
-    console.log(`\x1b[32m[dryinstall] ✓ ${pkgName} will be fast-passed on next install\x1b[0m`);
+  } else if (command === 'trust' && args[1] === 'status') {
+    trustCache.printStatus();
+
+  } else if (command === '_allow_disabled' && pkgName) {
+    trustCache.record(pkgName, 'any', 'any', '', 'user_blocked');
+    console.log(`\x1b[33m[dryinstall] ${pkgName} added to trust cache — will prompt on next install\x1b[0m`);
 
   // ── deny <pkg> ───────────────────────────────────────
   // dryinstall deny <pkg>  — ECU 학습에서 제거
-  } else if (command === 'deny' && pkgName) {
-    trustCache.ignore(pkgName);
-    console.log(`\x1b[33m[dryinstall] ${pkgName} removed from learned whitelist\x1b[0m`);
+  } else if (command === '_deny_disabled' && pkgName) {
+    console.log(`\x1b[33m[dryinstall] Use dryinstall trust status to manage trust cache\x1b[0m`);
 
   // ── run ──────────────────────────────────────────────
   } else if (command === 'run') {
@@ -211,8 +212,7 @@ Usage:
   dryinstall profile                                Show developer profile + ECU learned whitelist
   dryinstall config suggest                         Auto-tune .dryinstallrc + ECU suggestions
 
-  dryinstall allow <pkg>                            Manually add package to ECU whitelist
-  dryinstall deny <pkg>                             Remove package from ECU whitelist
+  dryinstall trust status                           Show trust cache entries + confidence scores
 
   dryinstall run <script>                           Run npm script with execution tracking
   dryinstall track status                           Show execution learning status
@@ -230,11 +230,10 @@ Security Levels:
   Level 1  Relaxed    Install first + scan after             (fast prototyping)
   Level 0  Observer   Logs only, nothing blocked             (monitoring)
 
-ECU Learning:
-  Blocked packages that don't crash your app → auto-whitelisted after 3 runs
-  dryinstall profile       to see what ECU has learned
-  dryinstall config suggest  to review and apply suggestions
-  dryinstall allow <pkg>   to manually add to whitelist
+Trust Cache:
+  Evidence-based lifecycle decision memory
+  Enter = No always — auto-allow never happens
+  dryinstall trust status  to see trust cache entries
 `);
   }
 

@@ -257,7 +257,7 @@ function printStatus() {
   }
 
   // Trust cache 현황 함께 출력
-  trustCache.printTrustReport();
+  trustCache.printStatus();
 }
 
 module.exports = { recordBlocked, runWithTracking, printStatus };

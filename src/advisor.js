@@ -104,7 +104,7 @@ function printProfileReport() {
   if (summary.totalInstalls === 0) {
     console.log('\n\x1b[33m  No profile data yet. Install some packages first.\x1b[0m\n');
     // ECU 현황은 설치 없어도 출력
-    trustCache.printTrustReport();
+    trustCache.printStatus();
     return;
   }
 
@@ -144,7 +144,7 @@ function printProfileReport() {
   console.log(`\x1b[36m${LINE}\x1b[0m\n`);
 
   // ECU 학습 현황 이어서 출력
-  trustCache.printTrustReport();
+  trustCache.printStatus();
 }
 
 /**
@@ -163,7 +163,7 @@ async function runSuggest() {
   }
 
   // ECU whitelist 제안 이어서
-  await // trust-cache: 제안은 interactive 설치 시 자동 처리;
+  // trust-cache: 제안은 interactive 설치 시 자동 처리
 }
 
 module.exports = { advise, printAdaptiveSummary, printProfileReport, runSuggest };

@@ -1,6 +1,6 @@
 # dryinstall
 
-![version](https://img.shields.io/badge/version-0.7.0-blue)
+![version](https://img.shields.io/badge/version-0.8.0-blue)
 ![npm](https://img.shields.io/npm/v/dryinstall)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![node](https://img.shields.io/badge/node-%3E%3D16-brightgreen)
@@ -99,59 +99,40 @@ dryinstall setup-loader
 Every package goes through 8 checkpoints before a single byte executes.
 
 ```
-dryinstall install <pkg>
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│           Checkpoint Lineup             │
-│                                         │
-│  ① Confusion Check   Is this a fake?   │
-│  ② Hash Check        Was it tampered?  │
-│  ③ Version Diff      New sketchy code? │
-│  ④ Stealth Scan      Hiding something? │
-│  ⑤ Maintainer Check  Who owns this now?│
-└──────────────────┬──────────────────────┘
-                   │
-                   ▼
-          ┌────────────────┐
-          │  CVE Audit     │  Known bad? Out.
-          └───────┬────────┘
-                  │
-                  ▼
-          ┌────────────────┐
-          │ Lifecycle Block│  Wants to run code? Not today.
-          └───────┬────────┘
-                  │
-                  ▼
-          ┌────────────────┐
-          │  Quarantine    │  Goes into the sandbox.
-          │  Zone 🚫       │  Can't call home.
-          │                │  Can't touch your files.
-          │                │  Can't spawn a shell.
-          │                │  Just... sits there.
-          └───────┬────────┘
-                  │
-                  ▼
-            dry_modules/
-         (stored. not executed.)
-                  │
-                  ▼
-          ┌────────────────┐
-          │  Adaptive ECU  │  Learns your habits.
-          │                │  Gets smarter over time.
-          └───────┬────────┘
-                  │
-                  ▼
-   ┌──────────────────────────────┐
-   │  🦀 dryinstall-core (Rust)   │  The heart of the sandbox.
-   │                              │
-   │  seccomp   → syscall filter  │  OS kernel blocks network calls.
-   │  namespace → filesystem iso  │  /etc/passwd? Replaced with void.
-   │  env_clear → secret filter   │  AWS keys never leave this box.
-   │                              │
-   │  Node hook → child_process   │  execSync? execFile? Nope.
-   └──────────────────────────────┘
+══════════════════════════════════════════════════════
+  dryinstall  →  puppeteer@24.39.1
+  Level 2  Balanced — malicious only, whitelist fast-pass
+══════════════════════════════════════════════════════
+
+──────────────────────────────────────────────────────
+  ①~⑦  Running security checks in parallel  ...
+──────────────────────────────────────────────────────
+  ✓  All 7 checks passed
+
+──────────────────────────────────────────────────────
+  ⑧  Lifecycle Script Analysis  ...
+──────────────────────────────────────────────────────
+  ✓  puppeteer — postinstall: fast-pass  [known safe]
+  ✓  glob — prepare: fast-pass  [known safe]
+  ✗  evil-pkg — postinstall: BLOCKED  → curl http://...
+
+══════════════════════════════════════════════════════
+  ⚠  1 script(s) blocked  /  47 packages scanned
+══════════════════════════════════════════════════════
 ```
+
+**Checkpoint lineup:**
+
+| # | Check | What it catches |
+|---|---|---|
+| ① | Confusion Detection | Dependency Confusion attacks |
+| ② | Hash Verification | Tampered tarballs |
+| ③ | Version Diff | Dangerous patterns added between versions |
+| ④ | Stealth Detection | CI backdoors, time bombs, base64 eval |
+| ⑤ | Maintainer Monitor | Account takeovers |
+| ⑥ | CVE Audit | Known vulnerabilities |
+| ⑦ | Lifecycle Block | All install-time script execution |
+| ⑧ | Sandbox Isolation | vm + Worker Thread + Rust kernel-level |
 
 ---
 
@@ -173,33 +154,63 @@ It's not that we're mean. We just don't know you yet.
 
 ---
 
-### Interactive Mode — You're In Control
+### Trust Cache — Evidence-Based Trust System (new in v0.8.0)
 
-Not sure about a package? Let dryinstall ask you.
+> **"Trust cache is a memory device, not a trust device."**
 
-```bash
-dryinstall install <pkg> --interactive
-```
+When a lifecycle script is blocked, dryinstall remembers it. Next time the same package appears — same version, same script content, same environment — it shows you the full context and asks what to do.
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│     [dryinstall] Hey, this package wants to run code.    │
-├──────────────────────────────────────────────────────────┤
-│  Package : puppeteer                                     │
-│  Hook    : postinstall                                   │
-│  Command : node install.mjs   ← wants to do this        │
-│  Risk    : LOW                                           │
-└──────────────────────────────────────────────────────────┘
-  [a] Allow once        [A] Always allow  (remembered)
-  [b] Block (default)   [B] Always block  (remembered)
-  [v] What does it actually do?
-  [s] Block everything, I'm paranoid today
+──────────────────────────────────────────────────────────
+  Lifecycle Script Detected
+──────────────────────────────────────────────────────────
+  Package    : eslint-plugin-n@16.6.0
+  Script     : prepack
+  Command    : tsc --emitDeclarationOnly
+  Context    : linux:local
+
+  Risk analysis:
+  ✓  Network access   : none
+  ✓  Exec / shell     : none
+  ✓  File write       : yes (build artifacts)
+  ✓  Dangerous pattern: none
+
+  Confidence : 85/100 — Review recommended
+  History    : seen 3x — 0d ago — user_allowed
+
+  [Y/Enter] Allow once   [A] Always allow (this version + script only)
+  [N]       Block        [B] Always block   ← Enter default
+──────────────────────────────────────────────────────────
+  Allow? y/[N]/a/b
 ```
 
-Risk levels:
-- `HIGH` — HTTP calls, `eval`, `sudo`, `rm -rf`. Hard no.
-- `MED` — Something's off. Probably fine. Probably.
-- `LOW` — Standard build stuff. `tsc`, `npm run build`. Usually fine.
+**Key design decisions:**
+
+| Rule | Why |
+|---|---|
+| Enter = **No** always | Habit-clicking past prompts is an attack vector |
+| Auto-allow = **never** | "Seen 10x" doesn't mean safe — attackers can wait |
+| version + script hash locked | New version or changed script → full re-evaluation |
+| TTL: 7 days | Stale caches are dangerous |
+| Re-verify if published < 24h | Newly published packages get extra scrutiny |
+| CI vs local separated | Same script, different environments = different risk |
+| Referenced file hashed | `node build.js` changes → `build.js` content hashed too |
+| lock file integrity | `package-lock.json` resolved URL + integrity included |
+
+**Confidence Score:**
+
+```
+score = hash_match(40) + script_same(20) + deps_same(15)
+      + no_network(15) + no_fs_write(10)
+
+90+    Low risk           (but still asks you)
+60~89  Review recommended
+<60    High risk
+
+SUSPICIOUS scripts always score 0 — no exceptions.
+```
+
+Confidence is a hint for your decision. Never a trigger for auto-allow.
 
 ---
 
@@ -240,10 +251,6 @@ Same version number. Different contents. That's not an update. That's an attack.
 
 ### Stealth Backdoor Detection
 
-Some malicious code is clever. It hides. It waits. It only activates in CI environments, or on specific machines, or after a certain date.
-
-dryinstall knows the tricks.
-
 | What it looks like | What it actually is |
 |---|---|
 | `if(process.env.CI) { ... }` | Only runs on your build server |
@@ -255,8 +262,6 @@ dryinstall knows the tricks.
 ---
 
 ### Maintainer Change Detection
-
-The scariest supply chain attacks don't involve writing malicious code from scratch. They involve taking over an existing trusted package.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -274,76 +279,38 @@ The scariest supply chain attacks don't involve writing malicious code from scra
 
 ### Adaptive ECU — It Gets Smarter
 
-dryinstall watches how you work. Not in a creepy way. In a "stop bugging you about the same packages" way.
-
 ```bash
 dryinstall profile
 ```
 
 ```
 ══════════════════════════════════════════════
-  dryinstall knows you pretty well by now
+  dryinstall Developer Profile
 ══════════════════════════════════════════════
   Tracking since : 2026-03-11
   Total installs : 47
-  You seem to be : a backend developer
-  Version style  : you like stable releases
+  Project type   : backend developer
 
-  Packages you install a lot:
-    express    12x  (we get it, you like express)
-    lodash      8x  (classic)
+  Most used packages:
+    express    12x
+    lodash      8x
 
   Warning behavior:
     lifecycle   ████████░░  80% — you always ignore these
     stealth     ██░░░░░░░░  20% — you actually read these
+
 ══════════════════════════════════════════════
-```
-
-```bash
-dryinstall config suggest
-```
-
-```
-Based on what we've seen:
-  → glob      you've allowed this 5 times. want to just always allow it?
-  → rimraf    same deal.
-
-Apply? [Y/n]
+  Trust Cache
+══════════════════════════════════════════════
+  ✓ Allowed (2)
+    eslint-plugin-n@16.6.0   prepack  conf:85  seen:3x  exp:6d
+    typescript@5.4.0          prepare  conf:90  seen:7x  exp:4d
+══════════════════════════════════════════════
 ```
 
 ---
 
-### Execution Tracker — The Antivirus Problem, Solved
-
-Classic antivirus problem: tool blocks something → app breaks → user disables tool → point lost.
-
-dryinstall learns what actually needs to run and what doesn't.
-
-```bash
-# Set it up once per project
-npm init -y
-dryinstall setup-loader
-
-# Then just... use npm like normal
-npm start
-npm run dev
-```
-
-Behind the scenes:
-```
-npm start
-  → dryinstall hooks in silently
-  → your app runs normally
-
-App runs fine for 5+ seconds?
-  → "okay, that script wasn't needed"
-  → blocked forever, no noise
-
-App crashes immediately?
-  → "okay, that one actually matters"
-  → auto-added to allowlist
-  → reinstall and it works
-```
+### Execution Tracker
 
 ```bash
 dryinstall track status
@@ -362,8 +329,6 @@ dryinstall track status
 
 ### When Things Go Wrong — It Stays Calm
 
-dryinstall won't crash your workflow. Even if you break things.
-
 | What went wrong | What dryinstall does |
 |---|---|
 | You ran `npm install` directly | Warns you. Doesn't throw a fit. |
@@ -373,34 +338,26 @@ dryinstall won't crash your workflow. Even if you break things.
 | Old Node.js version | Quietly adjusts what it can do |
 | Permission error | Tells you exactly how to fix it |
 
-```
-You ran: npm install express
-
-  ⚠  Heads up — this wasn't scanned by dryinstall.
-     Consider using: dryinstall install express
-
-  Continuing anyway (unprotected)...
-```
-
-No lectures. No force-blocking. Just a heads up.
-
 ---
 
 ## Security Levels
 
 ```bash
-dryinstall install <pkg> --level=3   # default — full lockdown
-dryinstall install <pkg> --level=2   # balanced — most teams use this  
-dryinstall install <pkg> --level=1   # relaxed — vm only
-dryinstall install <pkg> --level=0   # observer mode — logs, doesn't block
+dryinstall install <pkg> --level=3   # Paranoid  — CI / security teams
+dryinstall install <pkg> --level=2   # Balanced  — general developers (default)
+dryinstall install <pkg> --level=1   # Relaxed   — fast prototyping
+dryinstall install <pkg> --level=0   # Observer  — logs only
 ```
 
-| Level | Vibe | What it does |
+| Level | Who it's for | What it does |
 |---|---|---|
-| 3 | Paranoid | Block everything dangerous + double isolation |
-| 2 | Sensible | Block `child_process`. Allow `fs`/`net`. |
-| 1 | Chill | vm sandbox only. No Worker Thread. |
-| 0 | Just watching | Logs everything. Blocks nothing. |
+| 3 | CI / security teams | Sequential scan + block all scripts |
+| 2 | General developers | Parallel scan + whitelist fast-pass + malicious only |
+| 1 | Fast prototyping | Install first, scan after, warn only |
+| 0 | Monitoring | Logs everything. Blocks nothing. |
+
+**What "fast-pass" means at Level 2:**  
+Known safe build tools (webpack, tsc, puppeteer, rimraf, 54 packages total) skip the scan entirely. Your install doesn't grind to a halt because `glob` has a `prepare` script.
 
 ---
 
@@ -410,7 +367,7 @@ dryinstall install <pkg> --level=0   # observer mode — logs, doesn't block
 # Installing packages
 dryinstall install <pkg>                          full 8-layer scan + install
 dryinstall install <pkg> --interactive            ask before each blocked script
-dryinstall install <pkg> --level=0-3             set paranoia level (default: 3)
+dryinstall install <pkg> --level=0-3             set security level (default: 2)
 dryinstall install <pkg> --allow=fs,net           let it touch specific things
 dryinstall install <pkg> --allow-package=name     whitelist a specific package
 dryinstall install <pkg> --allow-maintainer-change  live dangerously
@@ -422,78 +379,43 @@ dryinstall install <pkg> --json                   machine-readable JSON output
 dryinstall check <pkg>                            analyze a package without installing
 dryinstall check <pkg1> <pkg2> --json            CI-friendly batch check (exit 1 if blocked)
 
-# Diagnosis & repair  ← new in v0.6.0
+# Diagnosis & repair
 dryinstall doctor                                 diagnose all dependencies
-                                                  shows: status / role / who requires it / fix
 dryinstall fix                                    auto-repair: restore sandboxed + install missing
-dryinstall fix <pkg>                              repair a specific package only
+dryinstall fix <pkg>                             repair a specific package only
 dryinstall inspect                                show problem dependencies only
 dryinstall inspect --verbose                      show all dependencies
 
 # Managing your project
 dryinstall clean-install                          nuke node_modules, start fresh
 dryinstall scan                                   scan what's already installed
-dryinstall scan --quiet                           scan with minimal output (CI / long-term projects)
+dryinstall scan --quiet                           CI-friendly minimal output
 dryinstall list                                   what's in dry_modules
 
+# Trust Cache
+dryinstall trust status                           show trust cache + confidence scores
+
 # The smart stuff
-dryinstall profile                                see what dryinstall knows about you
+dryinstall profile                                developer profile + trust cache status
 dryinstall config suggest                         let it tune itself
-dryinstall run <script>                           run with tracking
+dryinstall run <script>                           run with execution tracking
 dryinstall track status                           what it's learned so far
 
 # Runtime
 dryinstall setup-loader                           hook into npm start/dev/serve
 dryinstall remove-loader                          unhook
 
-# Global flags (work with any command)
+# Global flags
 --quiet, -q       only show blocks and errors
 --verbose, -v     show all internal logs
 --json            machine-readable output, all logs go to stderr
-```
-
-### `dryinstall doctor` — What it looks like
-
-```
-════════════════════════════════════════════════════════
-  dryinstall — Dependency Doctor
-════════════════════════════════════════════════════════
-  ✓ ok: 58   ⚠ sandboxed: 1   ✗ missing: 2
-
-  Package                Status       Role                  Version
-  ──────────────────────────────────────────────────────────────────
-  core-js-pure           ✗ missing    ES polyfill (modular)  3.33.0
-  axe-core               ⚠ sandboxed  a11y testing           4.7.0
-
-  Why these packages are needed:
-  core-js-pure  (missing)
-    required by: @pmmmwh/react-refresh-webpack-plugin → babel-loader
-  axe-core  (sandboxed)
-    required by: eslint-plugin-jsx-a11y
-
-  Suggested fixes:
-  npm install core-js-pure
-  dryinstall fix axe-core
-════════════════════════════════════════════════════════
-```
-
-### `dryinstall fix` — Auto-repair
-
-```
-  Restoring sandboxed packages...
-  ✓ axe-core  restored
-
-  Installing missing packages...
-  ✓ core-js-pure
-
-  Done. 2 issue(s) fixed. Restart your app.
 ```
 
 ---
 
 ## How It Stacks Up
 
-| Tool | Blocks scripts | Pre-install checks | Runtime guard | Typo detect | Confusion | Hash | Stealth | Maintainer | Learns |
+| Tool | Blocks scripts | Pre-install checks | Runtime guard | Typo detect | Confusion | Hash | Stealth | Maintainer | Trust Cache |
 |---|---|---|---|---|---|---|---|---|---|
 | `npm audit` | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `socket.dev` | ✗ | ✗ | ✗ | △ | △ | ✗ | △ | ✗ | ✗ |
@@ -512,7 +434,9 @@ dryinstall remove-loader                          unhook
 | **Sandbox** | A walled-off environment where dangerous APIs don't exist. The package thinks it can do things. It cannot. |
 | **dry_modules** | Where dryinstall stores packages after install. Not `node_modules`. Nothing in here has ever run. |
 | **Typosquatting** | `lodash` vs `lodas`. One character. Someone registered the wrong spelling and put malware in it. |
-| **ECU** | Engine Control Unit — the car analogy for how dryinstall adapts to your behavior over time. |
+| **ECU** | Engine Control Unit — how dryinstall adapts to your behavior over time. |
+| **Trust Cache** | Evidence-based memory of past lifecycle decisions. A hint for your judgment — not a shortcut around it. |
+| **Confidence Score** | 0–100 score based on hash match, script content, deps, network/fs behavior. Never triggers auto-allow. |
 
 ---
 
@@ -520,7 +444,9 @@ dryinstall remove-loader                          unhook
 
 - **Native addons** (`.node` files): Can't sandbox these at the JS level. Use container isolation for those.
 - **Dynamic `import()`**: ES module dynamic imports are hard to intercept fully.
-- **False positives**: Some legitimate build tools get blocked too. The scanner knows about 52 of them already (webpack, vite, typescript...). Use `--allow-package` for the rest.
+- **False positives**: Some legitimate build tools get blocked too. The scanner knows about 54 of them already. Use `--allow-package` for the rest.
+- **Trust Cache is memory, not authority**: A package seen 100 times is not automatically safe. dryinstall always asks. You always decide.
+- **Linux only for kernel-level isolation**: seccomp + namespace require Linux. Windows/macOS get Node hook only.
 
 This started as a research project. It works. But for production environments, pair it with container isolation.
 
@@ -540,11 +466,12 @@ That's the gap dryinstall fills.
 
 | Version | What changed |
 |---|---|
-| **v0.7.0** | Rust sandbox engine (`dryinstall-core`) — OS kernel-level isolation via seccomp + namespace. N-API bridge. CLI options `-n -f -e`. Platform support table. |
-| **v0.6.0** | `dryinstall doctor`, `dryinstall fix`, `dryinstall inspect`, startup dependency report, logger system, parallel scan, `--quiet`/`--verbose` flags |
+| **v0.8.0** | Trust Cache — evidence-based lifecycle decision memory. Confidence Score (0–100). version + script hash + lock file integrity locking. TTL 7d + 24h re-verify for newly published. CI/local context separation. Enter = No always. `dryinstall trust status`. Structured install output UI. Level 2 as default. |
+| **v0.7.0** | Rust sandbox engine (`dryinstall-core`) — OS kernel-level isolation via seccomp + namespace. N-API bridge. CLI options `-n -f -e`. |
+| **v0.6.0** | `dryinstall doctor`, `dryinstall fix`, `dryinstall inspect`, startup dependency report, logger system, parallel scan, `--quiet`/`--verbose` |
 | v0.5.5 | Centralized logger (423 console.log → logger), `--quiet`/`--verbose` added |
-| v0.5.2 | Context-aware CI detection (false positive fix), `module.exports` fixes |
-| v0.5.0 | `dryinstall check`, `--json`, `--dry-run`, GitHub Actions, sandbox refactor, Worker Thread hardening |
+| v0.5.2 | Context-aware CI detection (false positive fix) |
+| v0.5.0 | `dryinstall check`, `--json`, `--dry-run`, GitHub Actions, sandbox refactor |
 | v0.4.0 | Execution Tracker, Exception Handler (7 scenarios) |
 | v0.3.0 | Adaptive ECU — profiler, advisor, rc-generator |
 | v0.2.0 | scanner whitelist (52 packages), detection pattern tuning |
@@ -592,7 +519,7 @@ native addon escape    possible ✗         impossible ✓
 * = bypassable via internal Node.js APIs
 ```
 
-**3-Layer Defense:**
+**4-Layer Defense:**
 
 | Layer | Technology | Blocks |
 |-------|-----------|--------|
@@ -603,7 +530,7 @@ native addon escape    possible ✗         impossible ✓
 
 **Source:** [`dryinstall-core/`](./dryinstall-core/) · [GitHub](https://github.com/MinSeok-log/dryinstall-core)
 
-> Experiment log with full reproduction steps: [EXPERIMENT.md](https://github.com/MinSeok-log/dryinstall-core/blob/main/EXPERIMENT.md)
+> Experiment log: [EXPERIMENT.md](https://github.com/MinSeok-log/dryinstall-core/blob/main/EXPERIMENT.md)
 
 ## Platform Support
 
@@ -612,9 +539,6 @@ native addon escape    possible ✗         impossible ✓
 | Linux    | ✓ | ✓ | ✓ | **Full support** |
 | macOS    | ✓ | △ | △ | Partial |
 | Windows  | ✓ | ✗ | ✗ | Node hook only |
-
-> **Linux** gives you the full Rust kernel-level sandbox.  
-> **Windows/macOS** full kernel-level support is planned for v0.7.x via OS-native isolation APIs (Job Object on Windows, Apple Sandbox on macOS).
 
 ---
 

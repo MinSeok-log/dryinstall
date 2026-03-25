@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 'use strict';
 
-const DryCLI         = require('../src/cli');
-const Scanner        = require('../src/scanner');
-const sandbox        = require('../src/sandbox');
-const monitor        = require('../src/monitor');
-const advisor        = require('../src/advisor');
+const DryCLI           = require('../src/cli');
+const Scanner          = require('../src/scanner');
+const sandbox          = require('../src/sandbox');
+const monitor          = require('../src/monitor');
+const advisor          = require('../src/advisor');
 const executionTracker = require('../src/execution-tracker');
-const ex             = require('../src/exception-handler');
+const trustCache = require('../src/learned-whitelist');  // ← 추가
+const ex               = require('../src/exception-handler');
 const { check, checkMultiple } = require('../src/checker');
-const logger         = require('../src/logger');
-const { runInspect, summarizeErrors } = require('../src/startup-inspector');
+const logger           = require('../src/logger');
+const { runInspect }   = require('../src/startup-inspector');
 const { diagnose, printReport, fix: doctorFix } = require('../src/doctor');
 
 // ── 시작 시 환경 검사 ─────────────────────────────────
@@ -32,21 +33,21 @@ const dryRun       = args.includes('--dry-run');
 const quietFlag    = args.includes('--quiet')   || args.includes('-q');
 const verboseFlag  = args.includes('--verbose') || args.includes('-v');
 
-// ── 로그 레벨 적용 ────────────────────────────────────
-if (jsonFlag)       logger.setJson(true);
-else if (quietFlag) logger.setLevel('QUIET');
+if (jsonFlag)         logger.setJson(true);
+else if (quietFlag)   logger.setLevel('QUIET');
 else if (verboseFlag) logger.setLevel('VERBOSE');
 
-const level          = levelFlag    ? parseInt(levelFlag.split('=')[1])        : defaultLevel;
-const extraAllowed   = allowFlag    ? allowFlag.split('=')[1].split(',')       : [];
-const allowedPackages = allowPkgFlag ? allowPkgFlag.split('=')[1].split(',')  : [];
+const level           = levelFlag     ? parseInt(levelFlag.split('=')[1])       : defaultLevel;
+const extraAllowed    = allowFlag     ? allowFlag.split('=')[1].split(',')       : [];
+const allowedPackages = allowPkgFlag  ? allowPkgFlag.split('=')[1].split(',')   : [];
 
-// 패키지명 — 명령어/플래그 아닌 첫 번째 인수
 const pkgName = args.filter(a =>
   !a.startsWith('--') && a !== command && a !== args[1]
 )[0] || args.filter(a => !a.startsWith('--') && a !== command)[0];
 
-// sandbox 옵션 적용
+// ── DRYINSTALL_LEVEL 환경변수 주입 ← 핵심 추가
+process.env.DRYINSTALL_LEVEL = String(level);
+
 sandbox.setLevel(level);
 sandbox.setInteractive(interactive);
 sandbox.setExtraAllowed(extraAllowed);
@@ -62,29 +63,21 @@ const cli = new DryCLI(process.cwd());
 
   // ── install ─────────────────────────────────────────
   if (command === 'install' && pkgName) {
-
-    // --dry-run: 설치 없이 분석만
     if (dryRun) {
       const result = await check(pkgName, { json: jsonFlag });
       if (jsonFlag) process.exit(result.ciExitCode ?? 0);
       process.exit(result.verdict === 'BLOCK' ? 1 : 0);
     }
-
     await cli.install(pkgName);
     sandbox.report();
 
   // ── check ────────────────────────────────────────────
   } else if (command === 'check') {
-    // dryinstall check <pkg> [<pkg2> ...] [--json]
-    const targets = args
-      .slice(1)
-      .filter(a => !a.startsWith('--'));
-
+    const targets = args.slice(1).filter(a => !a.startsWith('--'));
     if (targets.length === 0) {
       console.error('Usage: dryinstall check <pkg> [<pkg2> ...] [--json]');
       process.exit(1);
     }
-
     if (targets.length === 1) {
       const result = await check(targets[0], { json: jsonFlag });
       if (jsonFlag) process.exit(result.ciExitCode ?? 0);
@@ -97,8 +90,7 @@ const cli = new DryCLI(process.cwd());
           : results.ciExitCode === 1;
         process.exit(hasBlock ? 1 : 0);
       }
-      const hasBlock = results.some(r => r.verdict === 'BLOCK');
-      process.exit(hasBlock ? 1 : 0);
+      process.exit(results.some(r => r.verdict === 'BLOCK') ? 1 : 0);
     }
 
   // ── clean-install ────────────────────────────────────
@@ -110,7 +102,6 @@ const cli = new DryCLI(process.cwd());
   } else if (command === 'scan') {
     const scanner = new Scanner(process.cwd());
     if (jsonFlag) {
-      // --json: scanner 내부 console 억제, stdout에 JSON만
       const _l = console.log, _w = console.warn, _e = console.error;
       console.log = console.warn = console.error = (...a) => process.stderr.write(a.join(' ') + '\n');
       const result = await scanner.scan();
@@ -134,20 +125,34 @@ const cli = new DryCLI(process.cwd());
   // ── profile ──────────────────────────────────────────
   } else if (command === 'profile') {
     if (jsonFlag) {
-      // printProfileReport가 출력하는 내용을 캡처해서 JSON으로 반환
       const lines = [];
       const _l = console.log;
       console.log = (...a) => lines.push(a.join(' '));
       advisor.printProfileReport();
+      trustCache.printTrustReport();  // ECU 학습 현황 포함
       console.log = _l;
       process.stdout.write(JSON.stringify({ output: lines }, null, 2) + '\n');
     } else {
       advisor.printProfileReport();
+      trustCache.printTrustReport();  // ECU 학습 현황 포함
     }
 
   // ── config suggest ───────────────────────────────────
   } else if (command === 'config' && args[1] === 'suggest') {
     await advisor.runSuggest();
+    await // trust-cache: 제안은 interactive 설치 시 자동 처리;  // ECU 제안 포함
+
+  // ── allow <pkg> ──────────────────────────────────────
+  // dryinstall allow <pkg>  — 수동으로 ECU whitelist 추가
+  } else if (command === 'allow' && pkgName) {
+    trustCache.manualAllow(pkgName, 'user');
+    console.log(`\x1b[32m[dryinstall] ✓ ${pkgName} will be fast-passed on next install\x1b[0m`);
+
+  // ── deny <pkg> ───────────────────────────────────────
+  // dryinstall deny <pkg>  — ECU 학습에서 제거
+  } else if (command === 'deny' && pkgName) {
+    trustCache.ignore(pkgName);
+    console.log(`\x1b[33m[dryinstall] ${pkgName} removed from learned whitelist\x1b[0m`);
 
   // ── run ──────────────────────────────────────────────
   } else if (command === 'run') {
@@ -178,7 +183,6 @@ const cli = new DryCLI(process.cwd());
     runInspect(process.cwd(), { verbose });
 
   // ── fix ───────────────────────────────────────────────
-  // doctor fix: missing 설치 + sandboxed 복구 통합
   } else if (command === 'fix') {
     const targetPkg = args[1] || null;
     await doctorFix(process.cwd(), targetPkg);
@@ -202,11 +206,13 @@ Usage:
 
   dryinstall clean-install                          Remove node_modules and reinstall
   dryinstall scan                                   Scan installed node_modules for risks
-  dryinstall scan --json                            JSON output
   dryinstall list                                   List packages in dry_modules
 
-  dryinstall profile                                Show adaptive developer profile
-  dryinstall config suggest                         Auto-tune ~/.dryinstallrc
+  dryinstall profile                                Show developer profile + ECU learned whitelist
+  dryinstall config suggest                         Auto-tune .dryinstallrc + ECU suggestions
+
+  dryinstall allow <pkg>                            Manually add package to ECU whitelist
+  dryinstall deny <pkg>                             Remove package from ECU whitelist
 
   dryinstall run <script>                           Run npm script with execution tracking
   dryinstall track status                           Show execution learning status
@@ -214,31 +220,21 @@ Usage:
   dryinstall setup-loader                           Register runtime loader in package.json
   dryinstall remove-loader                          Remove loader registration
 
+  dryinstall doctor                                 Diagnose dependencies
+  dryinstall inspect [--verbose]                    Show dependency load status
+  dryinstall fix [<pkg>]                            Restore sandboxed packages
+
 Security Levels:
-  Level 3  Paranoid   Block all modules + Worker Thread isolation  (default)
-  Level 2  Balanced   Block child_process only, allow fs/net
-  Level 1  Relaxed    vm isolation only, no Worker Thread
-  Level 0  Off        Observe only, no blocking
+  Level 3  Paranoid   Full scan + block all scripts          (CI / security teams)
+  Level 2  Balanced   Malicious only + whitelist fast-pass   (general developers)  ← default
+  Level 1  Relaxed    Install first + scan after             (fast prototyping)
+  Level 0  Observer   Logs only, nothing blocked             (monitoring)
 
-CI/CD Usage:
-  dryinstall check express lodash --json
-  dryinstall doctor                                 Diagnose dependencies + show cause + suggest fix
-  dryinstall inspect                                Show dependency load status
-  dryinstall inspect --verbose                      Show all dependencies
-  dryinstall fix                                    Restore all sandboxed packages to node_modules
-  dryinstall fix <pkg>                              Restore specific package
-  dryinstall install react --dry-run --json
-  → exit code 0: safe  |  exit code 1: blocked
-
-Pipeline:
-  ① Confusion Detection   Detects Dependency Confusion attacks
-  ② Hash Verification     Validates tarball SHA512 integrity
-  ③ Version Diff          Compares versions for new dangerous patterns
-  ④ Stealth Detection     CI backdoors, time bombs, base64 eval
-  ⑤ Maintainer Monitor    Tracks maintainer changes / account takeovers
-  ⑥ CVE Audit             Known vulnerabilities via npm audit
-  ⑦ Lifecycle Block       Blocks ALL install-time scripts
-  ⑧ Sandbox Isolation     vm + Worker Thread isolation
+ECU Learning:
+  Blocked packages that don't crash your app → auto-whitelisted after 3 runs
+  dryinstall profile       to see what ECU has learned
+  dryinstall config suggest  to review and apply suggestions
+  dryinstall allow <pkg>   to manually add to whitelist
 `);
   }
 

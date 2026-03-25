@@ -1,6 +1,6 @@
 {
   "name": "dryinstall",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "npm supply chain attack defense via execution isolation",
   "main": "src/loader.js",
   "bin": {
@@ -12,6 +12,11 @@
     "demo:scan": "node demo/scan-demo.js",
     "demo:attack": "node demo/attack-test.js"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md"
+  ],
   "dependencies": {
     "tar": "^7.4.3"
   },
@@ -23,7 +28,10 @@
     "lifecycle",
     "rce",
     "defense",
-    "isolation"
+    "isolation",
+    "node-security",
+    "npm-security",
+    "trust-cache"
   ],
   "author": "minseok-log",
   "license": "MIT",

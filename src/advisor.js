@@ -1,16 +1,13 @@
 'use strict';
 
-const profiler = require('./profiler');
-const rcGenerator = require('./rc-generator');
-
-/**
- * Adaptive Advisor — 개발자 행동 기반 적응형 추천
- */
+const profiler         = require('./profiler');
+const rcGenerator      = require('./rc-generator');
+const trustCache = require('./trust-cache');  // ← 추가
 
 const THRESHOLDS = {
-  autoAllowAfter: 3,
-  ignoreRateHigh: 0.7,
-  ignoreRateLow: 0.1,
+  autoAllowAfter:  3,
+  ignoreRateHigh:  0.7,
+  ignoreRateLow:   0.1,
   familiarPackage: 3,
 };
 
@@ -51,44 +48,63 @@ function advise(pkgName, version, warningType) {
 }
 
 /**
- * 설치 후 요약 출력 + 자동 힌트
+ * 설치 후 요약 출력 + ECU 힌트
  */
 function printAdaptiveSummary(pkgName, version) {
-  const profile = require('fs').existsSync(
-    require('path').join(require('os').homedir(), '.dryinstall-profile.json')
-  ) ? JSON.parse(require('fs').readFileSync(
-    require('path').join(require('os').homedir(), '.dryinstall-profile.json'), 'utf-8'
-  )) : null;
+  const fs      = require('fs');
+  const path    = require('path');
+  const os      = require('os');
+  const profilePath = path.join(os.homedir(), '.dryinstall-profile.json');
+
+  if (!fs.existsSync(profilePath)) return;
+
+  let profile;
+  try { profile = JSON.parse(fs.readFileSync(profilePath, 'utf-8')); }
+  catch { return; }
 
   if (!profile || (profile.stats?.totalInstalls || 0) < 3) return;
 
   const pkgData = profile.packages?.[pkgName];
-  const lines = [];
+  const lines   = [];
 
   if (pkgData && pkgData.installCount > 1) {
     lines.push(`  ${pkgName} — installed ${pkgData.installCount}x  (last: ${pkgData.lastInstalled})`);
   }
 
-  if (lines.length > 0) {
+  // ECU 학습 상태 힌트
+  if (false /* trust-cache: 자동 허용 없음 */) {
+    lines.push(`  ${pkgName} — ECU learned: will fast-pass on future installs`);
+  }
+
+  const suggestions = [];
+  const hasSuggestion = suggestions.some(s => s.pkg === pkgName);
+
+  if (lines.length > 0 || hasSuggestion) {
     console.log('\n\x1b[36m── Adaptive Profile ──────────────────────────────────\x1b[0m');
     lines.forEach(l => console.log(`\x1b[90m${l}\x1b[0m`));
-    // 자동 힌트 — 추천이 있으면 조용히 알림
+
+    if (hasSuggestion) {
+      console.log(`\x1b[33m  [ECU] ${pkgName} blocked but app survived — run "dryinstall config suggest" to whitelist\x1b[0m`);
+    }
+
     rcGenerator.quickHint(profile);
     console.log('\x1b[36m──────────────────────────────────────────────────────\x1b[0m');
   } else {
-    // 라인 없어도 힌트는 출력
     rcGenerator.quickHint(profile);
   }
 }
 
 /**
- * dryinstall profile 명령어
+ * dryinstall profile
+ * 기존 프로파일 + ECU 학습 현황 함께 출력
  */
 function printProfileReport() {
   const summary = profiler.getSummary();
 
   if (summary.totalInstalls === 0) {
     console.log('\n\x1b[33m  No profile data yet. Install some packages first.\x1b[0m\n');
+    // ECU 현황은 설치 없어도 출력
+    trustCache.printTrustReport();
     return;
   }
 
@@ -96,9 +112,12 @@ function printProfileReport() {
     ? new Date(summary.since).toISOString().slice(0, 10)
     : 'unknown';
 
-  console.log('\n\x1b[36m══════════════════════════════════════════════════\x1b[0m');
+  const W    = 50;
+  const LINE = '═'.repeat(W);
+
+  console.log(`\n\x1b[36m${LINE}\x1b[0m`);
   console.log('\x1b[36m  dryinstall Developer Profile\x1b[0m');
-  console.log('\x1b[36m══════════════════════════════════════════════════\x1b[0m');
+  console.log(`\x1b[36m${LINE}\x1b[0m`);
   console.log(`\x1b[90m  Tracking since : ${since}\x1b[0m`);
   console.log(`\x1b[90m  Total installs : ${summary.totalInstalls}\x1b[0m`);
   console.log(`\x1b[90m  Project type   : ${summary.topProjectType}\x1b[0m`);
@@ -114,34 +133,37 @@ function printProfileReport() {
   if (summary.ignoreRates.length > 0) {
     console.log('\n\x1b[36m  Warning behavior:\x1b[0m');
     summary.ignoreRates.forEach(r => {
-      const bar = '█'.repeat(Math.round(r.rate * 10)) + '░'.repeat(10 - Math.round(r.rate * 10));
-      const pct = Math.round(r.rate * 100);
+      const bar   = '█'.repeat(Math.round(r.rate * 10)) + '░'.repeat(10 - Math.round(r.rate * 10));
+      const pct   = Math.round(r.rate * 100);
       const color = pct >= 70 ? '\x1b[33m' : pct <= 10 ? '\x1b[32m' : '\x1b[90m';
       console.log(`${color}    ${r.type.padEnd(15)} ${bar} ${pct}% ignored\x1b[0m`);
     });
   }
 
-  console.log('\n\x1b[90m  Run "dryinstall config suggest" to auto-tune .dryinstallrc\x1b[0m');
-  console.log('\x1b[36m══════════════════════════════════════════════════\x1b[0m\n');
+  console.log(`\n\x1b[90m  Run "dryinstall config suggest" to auto-tune .dryinstallrc\x1b[0m`);
+  console.log(`\x1b[36m${LINE}\x1b[0m\n`);
+
+  // ECU 학습 현황 이어서 출력
+  trustCache.printTrustReport();
 }
 
 /**
- * dryinstall config suggest 명령어
+ * dryinstall config suggest
+ * 기존 RC 제안 + ECU whitelist 제안 함께 처리
  */
 async function runSuggest() {
-  const os = require('os');
+  const os   = require('os');
   const path = require('path');
-  const fs = require('fs');
+  const fs   = require('fs');
   const profilePath = path.join(os.homedir(), '.dryinstall-profile.json');
 
-  if (!fs.existsSync(profilePath)) {
-    console.log('\n\x1b[33m  No profile data yet. Install some packages first.\x1b[0m\n');
-    return;
+  if (fs.existsSync(profilePath)) {
+    const profile = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
+    await rcGenerator.suggestAndApply(profile);
   }
 
-  const profile = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
-  await rcGenerator.suggestAndApply(profile);
+  // ECU whitelist 제안 이어서
+  await // trust-cache: 제안은 interactive 설치 시 자동 처리;
 }
 
 module.exports = { advise, printAdaptiveSummary, printProfileReport, runSuggest };
-

@@ -209,8 +209,8 @@ function printSecurityReport(report) {
   // ── 최종 결론 ────────────────────────────────────────
   console.log('');
   if (criticals.length === 0) {
-    console.log(`  ${C.GREEN}✓${C.RESET}  All lifecycle scripts blocked`);
-    console.log(`  ${C.GREEN}✓${C.RESET}  Zero code executed during install`);
+    console.log(`  ${C.GREEN}✓${C.RESET}  Install completed with dryinstall protection`);
+    console.log(`  ${C.GREEN}✓${C.RESET}  High-risk install behavior blocked or avoided`);
   } else {
     console.log(`  ${C.RED}✗${C.RESET}  Install blocked — ${criticals.length} critical issue(s) found`);
   }

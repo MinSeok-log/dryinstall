@@ -3,6 +3,7 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const logger = require('./logger');
 
 /**
  * DepGraph
@@ -22,14 +23,17 @@ class DepGraph {
   async build() {
     console.log('\x1b[36m[dryinstall:depgraph] Building dependency graph...\x1b[0m');
     try {
-      const output = execSync('npm ls --json --all 2>/dev/null', {
-        cwd: this.cwd, timeout: 15000, encoding: 'utf-8'
+      const output = execSync('npm ls --json --all', {
+        cwd: this.cwd,
+        timeout: 15000,
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
       });
       this.graph = JSON.parse(output);
       console.log('\x1b[32m[dryinstall:depgraph] Graph built successfully\x1b[0m');
     } catch (e) {
       // npm ls 실패 시 package-lock.json fallback
-      console.log('\x1b[33m[dryinstall:depgraph] npm ls failed, falling back to package-lock.json\x1b[0m');
+      logger.verbose(`depgraph: npm ls unavailable, using package-lock.json fallback (${e.code || e.message})`);
       this.graph = this._buildFromLockfile();
     }
     return this.graph;

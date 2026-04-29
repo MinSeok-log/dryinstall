@@ -13,6 +13,7 @@ const networkAnalyzer  = require('./network-analyzer');
 const executionTracker = require('./execution-tracker');
 const ex               = require('./exception-handler');
 const trustCache = require('./trust-cache');  // ← 증거 기반 신뢰 캐시
+const traceRecorder    = require('./trace-recorder');
 
 const { detectTyposquatting }         = require('./typo-detector');
 const { detectConfusion }             = require('./confusion-detector');
@@ -48,7 +49,7 @@ function stepDone(result, detail) {
 function banner(pkg, version, level) {
   const label = {
     3: 'Paranoid  — full scan, block all scripts',
-    2: 'Balanced  — malicious only, whitelist fast-pass',
+    2: 'Balanced  — fast install, high-risk blocks',
     1: 'Relaxed   — install first, scan after',
     0: 'Observer  — logs only, nothing blocked',
   }[level] ?? `Level ${level}`;
@@ -66,6 +67,11 @@ function finalSummary(blocked, scanned) {
     console.log(`  \x1b[33m⚠\x1b[0m  ${blocked} script(s) blocked  /  ${scanned} packages scanned`);
   }
   console.log(`${DLINE}\n`);
+}
+
+function printConciseSuccess(pkg, version, duration) {
+  const elapsed = duration ? ` (${(duration / 1000).toFixed(1)}s)` : '';
+  console.log(`\x1b[32m✓\x1b[0m ${pkg}@${version} installed with dryinstall protection${elapsed}`);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -114,6 +120,38 @@ function getFastPassSource(pkgName) {
   return 'pattern match';
 }
 
+function formatRisk(assessment) {
+  const reasons = assessment.risk.reasons.slice(0, 2).join(', ') || 'low risk';
+  return `risk ${assessment.risk.score}/100: ${reasons}`;
+}
+
+function shouldRunDeepChecks(level) {
+  return level >= 3;
+}
+
+function shouldShowDetailedOutput(level, report) {
+  return level >= 3 || report.blocked.length > 0 || report.warnings.length > 0;
+}
+
+function recordInstallTrace(report, level, decision, reason, extra = {}) {
+  const trace = traceRecorder.record({
+    type: 'install',
+    package: report.pkg,
+    version: report.version,
+    level,
+    decision,
+    reason,
+    scanned: report.scanned,
+    blocked: report.blocked,
+    warnings: report.warnings,
+    passed: report.passed,
+    durationMs: report.duration,
+    ...extra,
+  });
+  traceRecorder.printHint(trace);
+  return trace;
+}
+
 // ─────────────────────────────────────────────────────────────
 const DANGEROUS_HOOKS = [
   'preinstall', 'install', 'postinstall',
@@ -159,7 +197,7 @@ class Installer {
   constructor(cwd = process.cwd()) {
     this.cwd     = cwd;
     this.storage = new DryStorage(cwd);
-    this.level   = parseInt(process.env.DRYINSTALL_LEVEL ?? '3', 10);
+    this.level   = parseInt(process.env.DRYINSTALL_LEVEL ?? '2', 10);
   }
 
   async install(rawPkgName) {
@@ -169,18 +207,19 @@ class Installer {
 
     const report = {
       pkg: pkgName, version: null,
-      scanned: 1, blocked: [], passed: [],
+      scanned: 1, blocked: [], warnings: [], passed: [],
       duration: 0,
     };
 
     try {
-      banner(pkgName, requestedVersion, level);
+      const detailedOutput = shouldRunDeepChecks(level);
+      if (detailedOutput) banner(pkgName, requestedVersion, level);
       // 버전 바뀌면 trust cache 무효화
       if (requestedVersion) trustCache.invalidate(pkgName, requestedVersion);
 
-      // ── ①~⑦ 보안 스캔 ─────────────────────────────
-      if (level >= 2) {
-        stepStart('①~⑦', 'Running security checks in parallel');
+      // ── 빠른 사전 보호 ─────────────────────────────
+      if (detailedOutput) {
+        stepStart('①', 'Fast preflight');
       }
 
       // ① CVE Audit
@@ -189,6 +228,9 @@ class Installer {
         if (level >= 2) stepDone('fail', 'CVE — known vulnerability found');
         else { stepStart('①', 'CVE Audit'); stepDone('fail', 'Known vulnerability found'); }
         printBlockCard(pkgName, 'cve', { version: requestedVersion });
+        report.version = requestedVersion || 'latest';
+        report.blocked.push({ pkg: pkgName, reason: 'cve', severity: 'CRITICAL' });
+        recordInstallTrace(report, level, 'BLOCK', 'Known CVE vulnerability');
         return null;
       }
       if (level < 2) { stepStart('①', 'CVE Audit'); stepDone('ok', 'No known vulnerabilities'); }
@@ -200,6 +242,9 @@ class Installer {
         if (level >= 2) stepDone('fail', 'Dependency Confusion — attack detected');
         else { stepStart('②', 'Dependency Confusion'); stepDone('fail', 'Attack detected'); }
         printBlockCard(pkgName, 'confusion');
+        report.version = requestedVersion || 'latest';
+        report.blocked.push({ pkg: pkgName, reason: 'confusion', severity: 'CRITICAL' });
+        recordInstallTrace(report, level, 'BLOCK', 'Dependency confusion risk');
         return null;
       }
       if (level < 2) { stepStart('②', 'Dependency Confusion'); stepDone('ok', 'No confusion attack'); }
@@ -213,11 +258,18 @@ class Installer {
         else { stepStart('③', 'Registry'); stepDone('fail', `Not found: ${pkgName}`); }
         const suggestions = detectTyposquatting(pkgName);
         if (suggestions.length > 0) log(`Did you mean: ${suggestions[0].name}?`, 'warn');
+        report.version = requestedVersion || 'latest';
+        const suggestionList = Array.isArray(suggestions) ? suggestions : [];
+        recordInstallTrace(report, level, 'FAIL', 'Package metadata unavailable', {
+          suggestions: suggestionList.slice(0, 3),
+        });
         return null;
       }
 
       if (!meta?.['dist-tags']?.latest) {
         stepDone('fail', 'Invalid package metadata');
+        report.version = requestedVersion || 'latest';
+        recordInstallTrace(report, level, 'FAIL', 'Invalid package metadata');
         return null;
       }
 
@@ -233,67 +285,77 @@ class Installer {
       // npm 배포 시각 — trust-cache TTL + 24h 재검증에 사용
       const publishedAt  = meta.time?.[version] ?? null;
 
-      // ④ Version Diff
-      const diff = await analyzeVersionDiff(pkgName, version);
-      if (!diff.skipped && !diff.clean) {
-        const criticals = diff.findings.filter(f => f.severity === 'CRITICAL');
-        if (criticals.length > 0) {
-          if (level >= 2) stepDone('fail', 'Version Diff — dangerous pattern added');
-          else { stepStart('④', 'Version Diff'); stepDone('fail', 'Dangerous pattern added'); }
-          printBlockCard(pkgName, 'version_diff', {
-            version, pattern: criticals[0]?.pattern,
-            extra: `${criticals.length} critical pattern(s) added`,
-          });
+      if (shouldRunDeepChecks(level)) {
+        // ④ Version Diff
+        const diff = await analyzeVersionDiff(pkgName, version);
+        if (!diff.skipped && !diff.clean) {
+          const criticals = diff.findings.filter(f => f.severity === 'CRITICAL');
+          if (criticals.length > 0) {
+            stepDone('fail', 'Version Diff — dangerous pattern added');
+            printBlockCard(pkgName, 'version_diff', {
+              version, pattern: criticals[0]?.pattern,
+              extra: `${criticals.length} critical pattern(s) added`,
+            });
+            report.blocked.push({ pkg: pkgName, reason: 'version_diff', severity: 'CRITICAL', pattern: criticals[0]?.pattern });
+            recordInstallTrace(report, level, 'BLOCK', 'Dangerous version diff', {
+              findings: criticals.slice(0, 5),
+            });
+            return null;
+          }
+        }
+        report.passed.push('Version diff');
+
+        // ⑤ Hash Verification
+        const hash = await verifyHash(pkgName, version, tarballUrl, integrity);
+        if (hash.verified === false) {
+          stepDone('fail', 'Hash — integrity check failed');
+          printBlockCard(pkgName, 'hash', { version });
+          report.blocked.push({ pkg: pkgName, reason: 'hash', severity: 'CRITICAL' });
+          recordInstallTrace(report, level, 'BLOCK', 'Integrity mismatch');
           return null;
         }
-      }
-      if (level < 2) { stepStart('④', 'Version Diff'); stepDone('ok', 'No new dangerous patterns'); }
-      report.passed.push('Version diff');
+        report.passed.push('Hash verification');
 
-      // ⑤ Hash Verification
-      const hash = await verifyHash(pkgName, version, tarballUrl, integrity);
-      if (hash.verified === false) {
-        if (level >= 2) stepDone('fail', 'Hash — integrity check failed');
-        else { stepStart('⑤', 'Hash Verification'); stepDone('fail', 'Integrity check failed'); }
-        printBlockCard(pkgName, 'hash', { version });
-        return null;
-      }
-      if (level < 2) { stepStart('⑤', 'Hash Verification'); stepDone('ok', 'Integrity verified'); }
-      report.passed.push('Hash verification');
+        // ⑥ Stealth Backdoor
+        const stealth = await detectStealth(pkgName, tarballUrl);
+        if (!stealth.skipped && !stealth.clean) {
+          const criticals = stealth.findings.filter(f => f.severity === 'CRITICAL');
+          if (criticals.length > 0) {
+            stepDone('fail', 'Stealth — backdoor pattern detected');
+            printBlockCard(pkgName, 'stealth', { version, pattern: criticals[0]?.pattern });
+            report.blocked.push({ pkg: pkgName, reason: 'stealth', severity: 'CRITICAL', pattern: criticals[0]?.pattern });
+            recordInstallTrace(report, level, 'BLOCK', 'Stealth backdoor pattern', {
+              findings: criticals.slice(0, 5),
+            });
+            return null;
+          }
+        }
+        report.passed.push('Stealth scan');
 
-      // ⑥ Stealth Backdoor
-      const stealth = await detectStealth(pkgName, tarballUrl);
-      if (!stealth.skipped && !stealth.clean) {
-        const criticals = stealth.findings.filter(f => f.severity === 'CRITICAL');
-        if (criticals.length > 0) {
-          if (level >= 2) stepDone('fail', 'Stealth — backdoor pattern detected');
-          else { stepStart('⑥', 'Stealth Detection'); stepDone('fail', 'Backdoor detected'); }
-          printBlockCard(pkgName, 'stealth', { version, pattern: criticals[0]?.pattern });
+        // ⑦ Maintainer Monitor
+        const maintainer = await checkMaintainerChange(pkgName, version);
+        if (maintainer?.risk === 'CRITICAL') {
+          stepDone('fail', 'Maintainer — suspicious change detected');
+          printBlockCard(pkgName, 'maintainer', { version });
+          report.blocked.push({ pkg: pkgName, reason: 'maintainer', severity: 'CRITICAL' });
+          recordInstallTrace(report, level, 'BLOCK', 'Maintainer takeover risk', { maintainer });
           return null;
         }
+        report.passed.push('Maintainer check');
+        stepDone('ok', 'Full security checks passed');
+      } else {
+        report.passed.push('Fast preflight');
+        if (detailedOutput) stepDone('ok', 'Fast preflight passed');
       }
-      if (level < 2) { stepStart('⑥', 'Stealth Detection'); stepDone('ok', 'Clean'); }
-      report.passed.push('Stealth scan');
 
-      // ⑦ Maintainer Monitor
-      const maintainer = await checkMaintainerChange(pkgName, version);
-      if (maintainer?.risk === 'CRITICAL') {
-        if (level >= 2) stepDone('fail', 'Maintainer — suspicious change detected');
-        else { stepStart('⑦', 'Maintainer Monitor'); stepDone('fail', 'Suspicious change'); }
-        printBlockCard(pkgName, 'maintainer', { version });
-        return null;
-      }
-      if (level < 2) { stepStart('⑦', 'Maintainer Monitor'); stepDone('ok', 'No suspicious changes'); }
-      report.passed.push('Maintainer check');
-
-      if (level >= 2) stepDone('ok', 'All 7 checks passed');
-
-      // ── ⑧ Lifecycle Block ──────────────────────────
-      stepStart('⑧', 'Lifecycle Script Analysis');
-
+      // ── ② Lifecycle protection ─────────────────────
       const scripts      = versionMeta.scripts || {};
       const blockedHooks = Object.keys(scripts).filter(h => DANGEROUS_HOOKS.includes(h));
       let   blockedCount = 0;
+
+      if (detailedOutput && blockedHooks.length > 0) {
+        stepStart('②', 'Lifecycle protection');
+      }
 
       for (const hook of blockedHooks) {
         const cmd = scripts[hook];
@@ -301,25 +363,29 @@ class Installer {
         // 1. 하드코딩 whitelist fast-pass
         // 1. fast-pass (하드코딩 whitelist)
         if (isFastPass(pkgName, cmd, level)) {
-          stepDone('ok', `${pkgName} — ${hook}: fast-pass  [${getFastPassSource(pkgName)}]`);
+          if (detailedOutput) stepDone('ok', `${pkgName} — ${hook}: fast-pass  [${getFastPassSource(pkgName)}]`);
           continue;
         }
 
-        // 2. behavior fingerprint — 즉시 차단 대상
-        const fp = trustCache.analyzeFingerprint(cmd);
-        const cls = trustCache.classifyScript(cmd, fp);
+        const assessment = trustCache.assessScript(cmd, hook, level);
+        const cached = trustCache.lookup(pkgName, version, hook, cmd, this.cwd, { quiet: level < 3 });
 
-        if (cls === trustCache.CLASSIFICATION.SUSPICIOUS) {
-          stepDone('fail', `${pkgName} — ${hook}: BLOCKED  [suspicious pattern]`);
+        if (assessment.action === 'block') {
+          stepDone('fail', `${pkgName} — ${hook}: BLOCKED  [${formatRisk(assessment)}]`);
           sandbox.blockLifecycleScript(pkgName, `${hook}: ${cmd}`);
-          report.blocked.push({ pkg: pkgName, reason: 'lifecycle', hook, cmd, severity: 'WARN' });
+          report.blocked.push({
+            pkg: pkgName,
+            reason: 'lifecycle',
+            hook,
+            cmd,
+            severity: 'WARN',
+            risk: assessment.risk.score,
+            signals: assessment.risk.reasons,
+          });
           trustCache.record(pkgName, version, hook, cmd, 'user_blocked', this.cwd, publishedAt);
           blockedCount++;
           continue;
         }
-
-        // 3. trust cache 조회 (version + scriptHash + refFileHash + context 완전 일치)
-        const cached = trustCache.lookup(pkgName, version, hook, cmd, this.cwd);
 
         if (cached.found && cached.autoBlock) {
           // 이전에 차단 결정 → 즉시 차단
@@ -327,6 +393,19 @@ class Installer {
           sandbox.blockLifecycleScript(pkgName, `${hook}: ${cmd}`);
           report.blocked.push({ pkg: pkgName, reason: 'lifecycle', hook, cmd, severity: 'WARN' });
           blockedCount++;
+          continue;
+        }
+
+        if (assessment.action === 'warn') {
+          stepDone('warn', `${pkgName} — ${hook}: allowed with warning  [${formatRisk(assessment)}]`);
+          report.warnings.push({
+            pkg: pkgName,
+            hook,
+            cmd,
+            risk: assessment.risk.score,
+            signals: assessment.risk.reasons,
+          });
+          trustCache.record(pkgName, version, hook, cmd, 'risk_warned', this.cwd, publishedAt);
           continue;
         }
 
@@ -341,17 +420,16 @@ class Installer {
           continue;
         }
 
-        // 4. 처음 보는 스크립트 → 차단 + cache 기록
-        stepDone('fail', `${pkgName} — ${hook}: BLOCKED  →  ${cmd.slice(0, 40)}`);
-        sandbox.blockLifecycleScript(pkgName, `${hook}: ${cmd}`);
-        report.blocked.push({ pkg: pkgName, reason: 'lifecycle', hook, cmd, severity: 'WARN' });
-        trustCache.record(pkgName, version, hook, cmd, 'user_blocked', this.cwd, publishedAt);
-        blockedCount++;
+        // Low-risk first-seen scripts pass in developer-friendly levels.
+        if (detailedOutput) stepDone('ok', `${pkgName} — ${hook}: allowed  [${formatRisk(assessment)}]`);
+        trustCache.record(pkgName, version, hook, cmd, 'risk_allowed', this.cwd, publishedAt);
       }
 
       if (blockedHooks.length > 0) executionTracker.recordBlocked(pkgName, blockedHooks);
 
-      await this._checkDeps(pkgName, versionMeta, 0, new Set([pkgName]), report, level);
+      if (shouldRunDeepChecks(level)) {
+        await this._checkDeps(pkgName, versionMeta, 0, new Set([pkgName]), report, level);
+      }
 
       // ── 다운로드 + 저장 ────────────────────────────
       networkAnalyzer.start(pkgName);
@@ -366,13 +444,30 @@ class Installer {
       advisor.printAdaptiveSummary(pkgName, version);
 
       report.duration = Date.now() - startTime;
-      finalSummary(report.blocked.length, report.scanned);
-      printSecurityReport(report);
+      if (shouldShowDetailedOutput(level, report)) {
+        const decision = report.blocked.length > 0 ? 'BLOCK' : 'WARN';
+        const reason = report.blocked.length > 0
+          ? 'Install completed with blocked behavior'
+          : 'Install completed with warnings';
+        recordInstallTrace(report, level, decision, reason);
+        finalSummary(report.blocked.length, report.scanned);
+        printSecurityReport(report);
+      } else {
+        printConciseSuccess(pkgName, version, report.duration);
+      }
 
       return { name: pkgName, version };
 
     } catch (err) {
       log(`Install failed: ${err.message}`, 'error');
+      report.duration = Date.now() - startTime;
+      recordInstallTrace(report, level, 'FAIL', err.message, {
+        error: {
+          name: err.name,
+          message: err.message,
+          stack: err.stack,
+        },
+      });
       throw err;
     }
   }
@@ -419,28 +514,42 @@ class Installer {
             continue;
           }
 
-          // behavior fingerprint
-          const fp2 = trustCache.analyzeFingerprint(cmd);
-          const cls2 = trustCache.classifyScript(cmd, fp2);
+          const assessment2 = trustCache.assessScript(cmd, hook, level);
+          const cached2 = trustCache.lookup(dep, depVersion, hook, cmd, this.cwd, { quiet: level < 3 });
 
-          if (cls2 === trustCache.CLASSIFICATION.SUSPICIOUS) {
+          if (assessment2.action === 'block') {
             sandbox.blockLifecycleScript(dep, `${hook}: ${cmd}`);
-            stepDone('fail', `${dep} — ${hook}: BLOCKED  [suspicious]`);
-            report.blocked.push({ pkg: dep, reason: 'lifecycle', hook, cmd, severity: 'WARN' });
+            stepDone('fail', `${dep} — ${hook}: BLOCKED  [${formatRisk(assessment2)}]`);
+            report.blocked.push({
+              pkg: dep,
+              reason: 'lifecycle',
+              hook,
+              cmd,
+              severity: 'WARN',
+              risk: assessment2.risk.score,
+              signals: assessment2.risk.reasons,
+            });
             trustCache.record(dep, depVersion, hook, cmd, 'user_blocked', this.cwd, depPublishedAt);
-          } else if (level >= 3) {
+          } else if (cached2.found && cached2.autoBlock) {
             sandbox.blockLifecycleScript(dep, `${hook}: ${cmd}`);
-            stepDone('warn', `${dep} — ${hook}: blocked (level 3)`);
+            stepDone('fail', `${dep} — ${hook}: BLOCKED  [trust cache]`);
             report.blocked.push({ pkg: dep, reason: 'lifecycle', hook, cmd, severity: 'WARN' });
+          } else if (assessment2.action === 'warn') {
+            stepDone('warn', `${dep} — ${hook}: allowed with warning  [${formatRisk(assessment2)}]`);
+            report.warnings.push({
+              pkg: dep,
+              hook,
+              cmd,
+              risk: assessment2.risk.score,
+              signals: assessment2.risk.reasons,
+            });
+            trustCache.record(dep, depVersion, hook, cmd, 'risk_warned', this.cwd, depPublishedAt);
           } else {
-            const cached2 = trustCache.lookup(dep, depVersion, hook, cmd, this.cwd);
             if (cached2.found && cached2.shouldAsk) {
               stepDone('warn', `${dep} — ${hook}: seen before — allow? (run interactively)`);
             } else {
-              sandbox.blockLifecycleScript(dep, `${hook}: ${cmd}`);
-              stepDone('warn', `${dep} — ${hook}: blocked`);
-              report.blocked.push({ pkg: dep, reason: 'lifecycle', hook, cmd, severity: 'WARN' });
-              trustCache.record(dep, depVersion, hook, cmd, 'user_blocked', this.cwd, depPublishedAt);
+              stepDone('ok', `${dep} — ${hook}: allowed  [${formatRisk(assessment2)}]`);
+              trustCache.record(dep, depVersion, hook, cmd, 'risk_allowed', this.cwd, depPublishedAt);
             }
           }
         }

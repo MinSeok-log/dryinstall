@@ -76,7 +76,7 @@ class Auditor {
       return result;
 
     } catch (err) {
-      logger.warn(`[dryinstall:audit] Could not audit ${pkgName}: ${err.message}`);
+      logger.verbose(`[dryinstall:audit] Could not audit ${pkgName}: ${err.message}`);
       return { safe: true, vulnerabilities: [] };
     }
   }

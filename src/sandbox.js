@@ -12,7 +12,7 @@ class SandboxRuntime {
   constructor() {
     this.blocked          = [];
     this.allowed          = [];
-    this.level            = 3;
+    this.level            = 2;
     this.interactive      = false;
     this.extraAllowed     = [];
     this.allowedPackages  = [];
@@ -21,7 +21,8 @@ class SandboxRuntime {
   }
 
   setLevel(level) {
-    this.level = parseInt(level) || 3;
+    const parsed = Number.parseInt(level, 10);
+    this.level = Number.isNaN(parsed) ? 2 : parsed;
     const info = SECURITY_LEVELS[this.level];
     logger.verbose(`[dryinstall:security] Level ${this.level} — ${info.name}`);
   }

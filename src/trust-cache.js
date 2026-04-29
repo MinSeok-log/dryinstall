@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 /**
  * trust-cache.js
@@ -146,21 +146,83 @@ function confidenceLabel(score) {
 const NETWORK_PATTERNS   = [/https?:\/\//, /curl\b/, /wget\b/, /fetch\b/, /socket\.connect/, /\.request\(/];
 const EXEC_PATTERNS      = [/child_process/, /exec\s*\(/, /spawn\s*\(/, /execSync/, /\/bin\/sh/, /\/bin\/bash/, /powershell/i];
 const WRITE_PATTERNS     = [/fs\.write/, /fs\.unlink/, /fs\.rm/, /rm\s+-rf/, /writeFile/, /appendFile/];
-const DANGEROUS_PATTERNS = [/eval\s*\(/, /Buffer\.from.*base64/, /process\.env.*JSON\.stringify/, /169\.254\.169\.254/, /metadata\.google/i, /sudo\b/, /chmod\s+[0-7]*7/];
+const ENV_PATTERNS       = [/process\.env/, /\.env\b/, /NPM_TOKEN|AWS_SECRET|AWS_ACCESS_KEY|GITHUB_TOKEN|SECRET_KEY/i];
+const SENSITIVE_ENV_PATTERNS = [/NPM_TOKEN|AWS_SECRET|AWS_ACCESS_KEY|GITHUB_TOKEN|SECRET_KEY/i];
+const OBFUSCATION_PATTERNS = [/eval\s*\(/, /Buffer\.from.*base64/, /base64/, /atob\s*\(/, /new Function\s*\(/];
+const DELETE_PATTERNS    = [/rm\s+-rf/, /rmdir\b/, /fs\.rm/, /fs\.unlink/];
+const SHELL_DOWNLOAD_PATTERNS = [/(curl|wget)\b[^|&;]*(\||&&|;)\s*(sh|bash|node|powershell)/i];
+const DANGEROUS_PATTERNS = [/process\.env.*JSON\.stringify/, /169\.254\.169\.254/, /metadata\.google/i, /sudo\b/, /chmod\s+[0-7]*7/];
 
 function analyzeFingerprint(cmd) {
   return {
     hasNetwork:   NETWORK_PATTERNS.some(p => p.test(cmd)),
     hasExec:      EXEC_PATTERNS.some(p => p.test(cmd)),
     hasFileWrite: WRITE_PATTERNS.some(p => p.test(cmd)),
+    hasEnvAccess: ENV_PATTERNS.some(p => p.test(cmd)),
+    hasSensitiveEnv: SENSITIVE_ENV_PATTERNS.some(p => p.test(cmd)),
+    hasObfuscation: OBFUSCATION_PATTERNS.some(p => p.test(cmd)),
+    hasDeletion: DELETE_PATTERNS.some(p => p.test(cmd)),
+    hasShellDownload: SHELL_DOWNLOAD_PATTERNS.some(p => p.test(cmd)),
     isDangerous:  DANGEROUS_PATTERNS.some(p => p.test(cmd)),
   };
 }
 
-function classifyScript(cmd, fp) {
-  if (fp.isDangerous || fp.hasNetwork || fp.hasExec) return CLASSIFICATION.SUSPICIOUS;
+function scoreScriptRisk(cmd, hook = '', fp = analyzeFingerprint(cmd)) {
+  let score = 0;
+  const reasons = [];
+  const add = (points, reason) => {
+    score += points;
+    reasons.push(reason);
+  };
+
+  if (hook === 'preinstall') add(10, 'early lifecycle hook');
+  else if (hook) add(5, 'lifecycle hook');
+
+  if (fp.isDangerous) add(70, 'dangerous pattern');
+  if (fp.hasShellDownload) add(75, 'download piped to shell');
+  if (fp.hasObfuscation) add(35, 'obfuscation or dynamic code');
+  if (fp.hasExec) add(30, 'exec or shell access');
+  if (fp.hasNetwork) add(25, 'network access');
+  if (fp.hasSensitiveEnv) add(40, 'sensitive environment access');
+  else if (fp.hasEnvAccess) add(25, 'environment access');
+  if (fp.hasDeletion) add(35, 'file deletion');
+  else if (fp.hasFileWrite) add(10, 'file write');
+
+  if (fp.hasNetwork && fp.hasExec) add(30, 'network plus exec');
+  if (fp.hasNetwork && fp.hasEnvAccess) add(35, 'network plus environment access');
+  if (fp.hasExec && fp.hasObfuscation) add(30, 'exec plus obfuscation');
+
+  return {
+    score: Math.min(score, 100),
+    reasons,
+  };
+}
+
+function classifyScript(cmd, fp, hook = '') {
+  const risk = scoreScriptRisk(cmd, hook, fp);
+  if (risk.score >= 70) return CLASSIFICATION.SUSPICIOUS;
+  if (risk.score >= 35) return CLASSIFICATION.UNKNOWN;
   if (fp.hasFileWrite) return CLASSIFICATION.SAFE_INSTALL;
   return CLASSIFICATION.SAFE_BUILD;
+}
+
+function actionForLevel(risk, level) {
+  const score = typeof risk === 'number' ? risk : risk.score;
+  if (level <= 0) return 'allow';
+  if (level === 1) return score >= 90 ? 'block' : score >= 35 ? 'warn' : 'allow';
+  if (level === 2) return score >= 70 ? 'block' : score >= 35 ? 'warn' : 'allow';
+  return score > 0 ? 'block' : 'warn';
+}
+
+function assessScript(cmd, hook = '', level = 2) {
+  const fp = analyzeFingerprint(cmd);
+  const risk = scoreScriptRisk(cmd, hook, fp);
+  return {
+    fingerprint: fp,
+    risk,
+    classification: classifyScript(cmd, fp, hook),
+    action: actionForLevel(risk, level),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -213,7 +275,7 @@ function _isNewlyPublished(entry) {
 /**
  * 캐시 조회
  */
-function lookup(pkgName, version, hook, cmd, cwd = process.cwd()) {
+function lookup(pkgName, version, hook, cmd, cwd = process.cwd(), opts = {}) {
   const store = _load();
   const key   = _key(pkgName, version, hook, cmd, cwd);
   const entry = store.entries[key];
@@ -222,7 +284,7 @@ function lookup(pkgName, version, hook, cmd, cwd = process.cwd()) {
 
   // TTL 만료
   if (_isExpired(entry)) {
-    process.stdout.write(
+    if (!opts.quiet) process.stdout.write(
       `\x1b[33m[dryinstall:trust] ${pkgName}@${version} — cache expired (>7d), re-evaluating\x1b[0m\n`
     );
     return { found: false, expired: true };
@@ -230,7 +292,7 @@ function lookup(pkgName, version, hook, cmd, cwd = process.cwd()) {
 
   // 배포 후 24h 이내 → 재검증
   if (_isNewlyPublished(entry)) {
-    process.stdout.write(
+    if (!opts.quiet) process.stdout.write(
       `\x1b[33m[dryinstall:trust] ${pkgName}@${version} — newly published (<24h), re-evaluating\x1b[0m\n`
     );
     return { found: false, newlyPublished: true };
@@ -445,6 +507,9 @@ module.exports = {
   calcConfidence,
   confidenceLabel,
   analyzeFingerprint,
+  scoreScriptRisk,
+  actionForLevel,
+  assessScript,
   classifyScript,
   printStatus,
   CLASSIFICATION,

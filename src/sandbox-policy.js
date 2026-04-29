@@ -15,13 +15,13 @@ const POLICY_PATH = path.join(process.cwd(), 'dryinstall.policy.json');
 // ── 보안 레벨 정의 ─────────────────────────────────────
 const SECURITY_LEVELS = {
   3: {
-    name:           'Paranoid (Default)',
+    name:           'Paranoid',
     blockedModules: ['fs','net','child_process','os','cluster','dgram','dns','tls','http','https'],
     blockLifecycle: true,
     useWorker:      true,
   },
   2: {
-    name:           'Balanced',
+    name:           'Balanced (Default)',
     blockedModules: ['child_process','cluster','dgram'],
     blockLifecycle: true,
     useWorker:      false,

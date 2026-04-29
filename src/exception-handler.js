@@ -187,7 +187,7 @@ function handleNetworkError(pkgName, cacheDir, err) {
  */
 function checkNodeVersion() {
   const [major, minor] = process.versions.node.split('.').map(Number);
-  const result = { ok: true, level: 3, warnings: [] };
+  const result = { ok: true, level: 2, warnings: [] };
 
   if (major < 12) {
     result.ok = false;

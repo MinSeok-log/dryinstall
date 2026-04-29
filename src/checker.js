@@ -2,9 +2,6 @@
 
 const https = require('https');
 const { detectConfusion }        = require('./confusion-detector');
-const { verifyHash }             = require('./hash-verifier');
-const { analyzeVersionDiff }     = require('./version-diff-analyzer');
-const { detectStealth }          = require('./stealth-detector');
 const { checkMaintainerChange }  = require('./maintainer-monitor');
 const auditor                    = require('./auditor');
 const logger = require('./logger');
@@ -181,7 +178,6 @@ async function check(rawPkg, opts = {}) {
   result.ciExitCode = result.verdict === 'BLOCK' ? 1 : 0;
 
   if (json) {
-    _restoreConsole();
     if (!silent) process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   } else {
     const color = result.verdict === 'SAFE'
@@ -208,7 +204,6 @@ async function check(rawPkg, opts = {}) {
     log('');
   }
 
-  _restoreConsole();
   return result;
 }
 

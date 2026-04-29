@@ -13,8 +13,9 @@ const { check, checkMultiple } = require('../src/checker');
 const logger           = require('../src/logger');
 const { runInspect }   = require('../src/startup-inspector');
 const { diagnose, printReport, fix: doctorFix } = require('../src/doctor');
+const traceRecorder    = require('../src/trace-recorder');
 
-// ── 시작 시 환경 검사 ─────────────────────────────────
+// ?? ?쒖옉 ???섍꼍 寃???????????????????????????????????
 const startupCheck = ex.runStartupChecks();
 if (!startupCheck.nodeVersion.ok) process.exit(1);
 const defaultLevel = startupCheck.nodeVersion.level;
@@ -22,7 +23,7 @@ const defaultLevel = startupCheck.nodeVersion.level;
 const args    = process.argv.slice(2);
 const command = args[0];
 
-// ── 옵션 파싱 ─────────────────────────────────────────
+// ?? ?듭뀡 ?뚯떛 ?????????????????????????????????????????
 const levelFlag    = args.find(a => a.startsWith('--level='));
 const allowFlag    = args.find(a => a.startsWith('--allow='));
 const allowPkgFlag = args.find(a => a.startsWith('--allow-package='));
@@ -45,7 +46,7 @@ const pkgName = args.filter(a =>
   !a.startsWith('--') && a !== command && a !== args[1]
 )[0] || args.filter(a => !a.startsWith('--') && a !== command)[0];
 
-// ── DRYINSTALL_LEVEL 환경변수 주입 ← 핵심 추가
+// ?? DRYINSTALL_LEVEL ?섍꼍蹂??二쇱엯 ???듭떖 異붽?
 process.env.DRYINSTALL_LEVEL = String(level);
 
 sandbox.setLevel(level);
@@ -61,7 +62,7 @@ const cli = new DryCLI(process.cwd());
     monitor.start();
   }
 
-  // ── install ─────────────────────────────────────────
+  // ?? install ?????????????????????????????????????????
   if (command === 'install' && pkgName) {
     if (dryRun) {
       const result = await check(pkgName, { json: jsonFlag });
@@ -71,7 +72,7 @@ const cli = new DryCLI(process.cwd());
     await cli.install(pkgName);
     sandbox.report();
 
-  // ── check ────────────────────────────────────────────
+  // ?? check ????????????????????????????????????????????
   } else if (command === 'check') {
     const targets = args.slice(1).filter(a => !a.startsWith('--'));
     if (targets.length === 0) {
@@ -93,12 +94,12 @@ const cli = new DryCLI(process.cwd());
       process.exit(results.some(r => r.verdict === 'BLOCK') ? 1 : 0);
     }
 
-  // ── clean-install ────────────────────────────────────
+  // ?? clean-install ????????????????????????????????????
   } else if (command === 'clean-install') {
     await cli.cleanInstall();
     sandbox.report();
 
-  // ── scan ─────────────────────────────────────────────
+  // ?? scan ?????????????????????????????????????????????
   } else if (command === 'scan') {
     const scanner = new Scanner(process.cwd());
     if (jsonFlag) {
@@ -111,18 +112,18 @@ const cli = new DryCLI(process.cwd());
       await scanner.scan();
     }
 
-  // ── list ─────────────────────────────────────────────
+  // ?? list ?????????????????????????????????????????????
   } else if (command === 'list') {
     cli.list();
 
-  // ── setup-loader / remove-loader ─────────────────────
+  // ?? setup-loader / remove-loader ?????????????????????
   } else if (command === 'setup-loader') {
     cli.setupLoader();
 
   } else if (command === 'remove-loader') {
     cli.removeLoader();
 
-  // ── profile ──────────────────────────────────────────
+  // ?? profile ??????????????????????????????????????????
   } else if (command === 'profile') {
     if (jsonFlag) {
       const lines = [];
@@ -137,30 +138,30 @@ const cli = new DryCLI(process.cwd());
       trustCache.printStatus();
     }
 
-  // ── config suggest ───────────────────────────────────
+  // ?? config suggest ???????????????????????????????????
   } else if (command === 'config' && args[1] === 'suggest') {
     await advisor.runSuggest();
 
-  // ── allow <pkg> ──────────────────────────────────────
-  // dryinstall allow <pkg>  — 수동으로 ECU whitelist 추가
+  // ?? allow <pkg> ??????????????????????????????????????
+  // dryinstall allow <pkg>  ???섎룞?쇰줈 ECU whitelist 異붽?
   } else if (command === 'trust' && args[1] === 'status') {
     trustCache.printStatus();
 
   } else if (command === '_allow_disabled' && pkgName) {
     trustCache.record(pkgName, 'any', 'any', '', 'user_blocked');
-    console.log(`\x1b[33m[dryinstall] ${pkgName} added to trust cache — will prompt on next install\x1b[0m`);
+    console.log(`\x1b[33m[dryinstall] ${pkgName} added to trust cache ??will prompt on next install\x1b[0m`);
 
-  // ── deny <pkg> ───────────────────────────────────────
-  // dryinstall deny <pkg>  — ECU 학습에서 제거
+  // ?? deny <pkg> ???????????????????????????????????????
+  // dryinstall deny <pkg>  ??ECU ?숈뒿?먯꽌 ?쒓굅
   } else if (command === '_deny_disabled' && pkgName) {
     console.log(`\x1b[33m[dryinstall] Use dryinstall trust status to manage trust cache\x1b[0m`);
 
-  // ── run ──────────────────────────────────────────────
+  // ?? run ??????????????????????????????????????????????
   } else if (command === 'run') {
     const scriptName = args[1] || 'start';
     await executionTracker.runWithTracking(scriptName, process.cwd());
 
-  // ── track status ─────────────────────────────────────
+  // ?? track status ?????????????????????????????????????
   } else if (command === 'track' && args[1] === 'status') {
     if (jsonFlag) {
       const lines = [];
@@ -173,28 +174,47 @@ const cli = new DryCLI(process.cwd());
       executionTracker.printStatus();
     }
 
-  // ── doctor ───────────────────────────────────────────
+
+  } else if (command === 'trace') {
+    const target = args[1] || 'latest';
+    if (target === 'list') {
+      const traces = traceRecorder.list(20);
+      if (jsonFlag) {
+        process.stdout.write(JSON.stringify(traces, null, 2) + '\n');
+      } else if (traces.length === 0) {
+        console.log('\n  No dryinstall traces found.\n');
+      } else {
+        console.log('');
+        traces.forEach(t => console.log(`  ${t.id}`));
+        console.log('');
+      }
+    } else {
+      const trace = traceRecorder.read(target);
+      if (jsonFlag) process.stdout.write(JSON.stringify(trace, null, 2) + '\n');
+      else traceRecorder.print(trace);
+    }
+  // ?? doctor ???????????????????????????????????????????
   } else if (command === 'doctor') {
     const results = await diagnose(process.cwd());
     printReport(results);
 
-  // ── inspect ──────────────────────────────────────────
+  // ?? inspect ??????????????????????????????????????????
   } else if (command === 'inspect') {
     const verbose = args.includes('--verbose') || args.includes('-v');
     runInspect(process.cwd(), { verbose });
 
-  // ── fix ───────────────────────────────────────────────
+  // ?? fix ???????????????????????????????????????????????
   } else if (command === 'fix') {
     const targetPkg = args[1] || null;
     await doctorFix(process.cwd(), targetPkg);
 
-  // ── help ─────────────────────────────────────────────
+  // ?? help ?????????????????????????????????????????????
   } else {
     console.log(`
 Usage:
   dryinstall install <pkg>                          Install through 8-layer security pipeline
   dryinstall install <pkg> --interactive            Prompt before each blocked lifecycle script
-  dryinstall install <pkg> --level=0-3             Set security level (default: 3)
+  dryinstall install <pkg> --level=0-3             Set security level (default: 2)
   dryinstall install <pkg> --allow=fs,net           Allow specific modules in sandbox
   dryinstall install <pkg> --allow-package=a,b      Allow lifecycle for specific packages
   dryinstall install <pkg> --allow-maintainer-change  Skip maintainer takeover block
@@ -216,6 +236,7 @@ Usage:
 
   dryinstall run <script>                           Run npm script with execution tracking
   dryinstall track status                           Show execution learning status
+  dryinstall trace [latest|list|<id>]               Show install warning/block trace
 
   dryinstall setup-loader                           Register runtime loader in package.json
   dryinstall remove-loader                          Remove loader registration
@@ -226,13 +247,13 @@ Usage:
 
 Security Levels:
   Level 3  Paranoid   Full scan + block all scripts          (CI / security teams)
-  Level 2  Balanced   Malicious only + whitelist fast-pass   (general developers)  ← default
+  Level 2  Balanced   Malicious only + whitelist fast-pass   (general developers)  ??default
   Level 1  Relaxed    Install first + scan after             (fast prototyping)
   Level 0  Observer   Logs only, nothing blocked             (monitoring)
 
 Trust Cache:
   Evidence-based lifecycle decision memory
-  Enter = No always — auto-allow never happens
+  Enter = No always ??auto-allow never happens
   dryinstall trust status  to see trust cache entries
 `);
   }
